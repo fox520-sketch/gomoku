@@ -1,0 +1,16 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /gomokuRooms/{roomId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+        && request.resource.data.roomCode is string
+        && request.resource.data.board is list
+        && request.resource.data.board.size() == 225;
+      allow update: if request.auth != null
+        && request.resource.data.board is list
+        && request.resource.data.board.size() == 225;
+      allow delete: if false;
+    }
+  }
+}

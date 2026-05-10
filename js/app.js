@@ -1,0 +1,1065 @@
+import { firebaseConfig } from "./firebase-config.js";
+
+let initializeApp;
+let getAuth;
+let signInAnonymously;
+let getFirestore;
+let doc;
+let getDoc;
+let setDoc;
+let updateDoc;
+let onSnapshot;
+let runTransaction;
+let serverTimestamp;
+
+const BOARD_SIZE = 15;
+const BLACK = 1;
+const WHITE = 2;
+const EMPTY = 0;
+const CANVAS_SIZE = 720;
+const STORAGE_PREFIX = "gomoku-ocean";
+
+const els = {
+  html: document.documentElement,
+  canvas: document.getElementById("boardCanvas"),
+  statusText: document.getElementById("statusText"),
+  turnText: document.getElementById("turnText"),
+  turnOrb: document.getElementById("turnOrb"),
+  overlay: document.getElementById("boardOverlay"),
+  overlayTitle: document.getElementById("overlayTitle"),
+  overlayMessage: document.getElementById("overlayMessage"),
+  blackTimer: document.getElementById("blackTimer"),
+  whiteTimer: document.getElementById("whiteTimer"),
+  modeSelect: document.getElementById("modeSelect"),
+  aiDifficultyWrap: document.getElementById("aiDifficultyWrap"),
+  difficultyRange: document.getElementById("difficultyRange"),
+  difficultyValue: document.getElementById("difficultyValue"),
+  themeSelect: document.getElementById("themeSelect"),
+  timerSelect: document.getElementById("timerSelect"),
+  soundToggle: document.getElementById("soundToggle"),
+  soundSelect: document.getElementById("soundSelect"),
+  onlinePanel: document.getElementById("onlinePanel"),
+  nicknameInput: document.getElementById("nicknameInput"),
+  roomCodeInput: document.getElementById("roomCodeInput"),
+  createRoomBtn: document.getElementById("createRoomBtn"),
+  joinRoomBtn: document.getElementById("joinRoomBtn"),
+  copyRoomBtn: document.getElementById("copyRoomBtn"),
+  roomInfo: document.getElementById("roomInfo"),
+  playerInfo: document.getElementById("playerInfo"),
+  newGameBtn: document.getElementById("newGameBtn"),
+  undoBtn: document.getElementById("undoBtn")
+};
+
+const ctx = els.canvas.getContext("2d");
+
+let state = {
+  board: createBoard(),
+  currentPlayer: BLACK,
+  history: [],
+  lastMove: null,
+  mode: "ai",
+  gameOver: false,
+  winner: EMPTY,
+  aiDifficulty: 10,
+  timerLimit: 0,
+  remaining: { [BLACK]: 0, [WHITE]: 0 },
+  soundEnabled: true,
+  soundType: "bubble",
+  aiThinking: false
+};
+
+let online = {
+  app: null,
+  auth: null,
+  db: null,
+  uid: null,
+  roomRef: null,
+  unsubscribe: null,
+  roomCode: "",
+  localColor: null,
+  ready: false,
+  busy: false
+};
+
+let timerHandle = null;
+let audioContext = null;
+
+init();
+
+function init() {
+  hydratePreferences();
+  bindEvents();
+  resizeCanvasForDisplay();
+  startNewGame({ silent: true });
+  window.addEventListener("resize", () => {
+    resizeCanvasForDisplay();
+    drawBoard();
+  });
+}
+
+function hydratePreferences() {
+  const theme = localStorage.getItem(`${STORAGE_PREFIX}:theme`) || "ocean";
+  const mode = localStorage.getItem(`${STORAGE_PREFIX}:mode`) || "ai";
+  const difficulty = Number(localStorage.getItem(`${STORAGE_PREFIX}:difficulty`) || 10);
+  const timer = Number(localStorage.getItem(`${STORAGE_PREFIX}:timer`) || 0);
+  const soundEnabled = localStorage.getItem(`${STORAGE_PREFIX}:soundEnabled`) !== "false";
+  const soundType = localStorage.getItem(`${STORAGE_PREFIX}:soundType`) || "bubble";
+  const nickname = localStorage.getItem(`${STORAGE_PREFIX}:nickname`) || "";
+
+  state.mode = mode;
+  state.aiDifficulty = clamp(difficulty, 1, 20);
+  state.timerLimit = timer;
+  state.soundEnabled = soundEnabled;
+  state.soundType = soundType;
+
+  els.html.dataset.theme = theme;
+  els.themeSelect.value = theme;
+  els.modeSelect.value = mode;
+  els.difficultyRange.value = String(state.aiDifficulty);
+  els.difficultyValue.textContent = String(state.aiDifficulty);
+  els.timerSelect.value = String(timer);
+  els.soundToggle.checked = soundEnabled;
+  els.soundSelect.value = soundType;
+  els.nicknameInput.value = nickname;
+  togglePanels();
+}
+
+function bindEvents() {
+  els.canvas.addEventListener("pointerdown", handleBoardPointer, { passive: false });
+
+  els.newGameBtn.addEventListener("click", () => {
+    if (state.mode === "online" && online.roomRef) {
+      resetOnlineRoom();
+    } else {
+      startNewGame();
+    }
+  });
+
+  els.undoBtn.addEventListener("click", () => {
+    if (state.mode === "online") undoOnlineMove();
+    else undoLocalMove();
+  });
+
+  els.modeSelect.addEventListener("change", () => {
+    state.mode = els.modeSelect.value;
+    localStorage.setItem(`${STORAGE_PREFIX}:mode`, state.mode);
+    togglePanels();
+    startNewGame();
+  });
+
+  els.themeSelect.addEventListener("change", () => {
+    els.html.dataset.theme = els.themeSelect.value;
+    localStorage.setItem(`${STORAGE_PREFIX}:theme`, els.themeSelect.value);
+    drawBoard();
+  });
+
+  els.difficultyRange.addEventListener("input", () => {
+    state.aiDifficulty = Number(els.difficultyRange.value);
+    els.difficultyValue.textContent = String(state.aiDifficulty);
+    localStorage.setItem(`${STORAGE_PREFIX}:difficulty`, String(state.aiDifficulty));
+  });
+
+  els.timerSelect.addEventListener("change", () => {
+    state.timerLimit = Number(els.timerSelect.value);
+    localStorage.setItem(`${STORAGE_PREFIX}:timer`, String(state.timerLimit));
+    resetTimers();
+    startTurnTimer();
+  });
+
+  els.soundToggle.addEventListener("change", () => {
+    state.soundEnabled = els.soundToggle.checked;
+    localStorage.setItem(`${STORAGE_PREFIX}:soundEnabled`, String(state.soundEnabled));
+    if (state.soundEnabled) playSound("ui");
+  });
+
+  els.soundSelect.addEventListener("change", () => {
+    state.soundType = els.soundSelect.value;
+    localStorage.setItem(`${STORAGE_PREFIX}:soundType`, state.soundType);
+    playSound("ui");
+  });
+
+  els.nicknameInput.addEventListener("change", () => {
+    localStorage.setItem(`${STORAGE_PREFIX}:nickname`, els.nicknameInput.value.trim());
+  });
+
+  els.createRoomBtn.addEventListener("click", createOnlineRoom);
+  els.joinRoomBtn.addEventListener("click", joinOnlineRoom);
+  els.copyRoomBtn.addEventListener("click", copyRoomCode);
+}
+
+function togglePanels() {
+  const isOnline = state.mode === "online";
+  els.onlinePanel.classList.toggle("hidden", !isOnline);
+  els.copyRoomBtn.classList.toggle("hidden", !isOnline || !online.roomCode);
+  els.aiDifficultyWrap.classList.toggle("hidden", state.mode !== "ai");
+}
+
+function createBoard() {
+  return Array.from({ length: BOARD_SIZE }, () => Array(BOARD_SIZE).fill(EMPTY));
+}
+
+function startNewGame(options = {}) {
+  clearInterval(timerHandle);
+  state.board = createBoard();
+  state.currentPlayer = BLACK;
+  state.history = [];
+  state.lastMove = null;
+  state.gameOver = false;
+  state.winner = EMPTY;
+  state.aiThinking = false;
+  resetTimers();
+  hideOverlay();
+  updateStatus();
+  drawBoard();
+  startTurnTimer();
+  if (!options.silent) playSound("start");
+}
+
+function resetTimers() {
+  state.remaining = {
+    [BLACK]: state.timerLimit,
+    [WHITE]: state.timerLimit
+  };
+  updateTimerDisplay();
+}
+
+function startTurnTimer() {
+  clearInterval(timerHandle);
+  if (!state.timerLimit || state.gameOver) {
+    updateTimerDisplay();
+    return;
+  }
+  state.remaining[state.currentPlayer] = state.timerLimit;
+  updateTimerDisplay();
+  timerHandle = setInterval(() => {
+    if (state.gameOver) {
+      clearInterval(timerHandle);
+      return;
+    }
+    state.remaining[state.currentPlayer] -= 1;
+    updateTimerDisplay();
+    if (state.remaining[state.currentPlayer] <= 0) {
+      handleTimeout();
+    }
+  }, 1000);
+}
+
+function updateTimerDisplay() {
+  els.blackTimer.textContent = state.timerLimit ? formatTime(state.remaining[BLACK]) : "--:--";
+  els.whiteTimer.textContent = state.timerLimit ? formatTime(state.remaining[WHITE]) : "--:--";
+}
+
+function formatTime(seconds) {
+  const safe = Math.max(0, Number(seconds) || 0);
+  const min = Math.floor(safe / 60).toString().padStart(2, "0");
+  const sec = (safe % 60).toString().padStart(2, "0");
+  return `${min}:${sec}`;
+}
+
+function handleTimeout() {
+  clearInterval(timerHandle);
+  const loser = state.currentPlayer;
+  const winner = otherPlayer(loser);
+  if (state.mode === "online" && online.roomRef && online.localColor === loser) {
+    updateDoc(online.roomRef, {
+      status: "ended",
+      winner,
+      updatedAt: serverTimestamp()
+    }).catch(showError);
+    return;
+  }
+  endGame(winner, `${playerName(loser)}超時，${playerName(winner)}獲勝！`);
+}
+
+function handleBoardPointer(event) {
+  event.preventDefault();
+  const pos = pointerToCell(event);
+  if (!pos) return;
+  if (state.mode === "online") {
+    playOnlineMove(pos.row, pos.col);
+  } else {
+    playLocalMove(pos.row, pos.col);
+  }
+}
+
+function pointerToCell(event) {
+  const rect = els.canvas.getBoundingClientRect();
+  const x = (event.clientX - rect.left) * (CANVAS_SIZE / rect.width);
+  const y = (event.clientY - rect.top) * (CANVAS_SIZE / rect.height);
+  const cell = CANVAS_SIZE / (BOARD_SIZE + 1);
+  const padding = cell;
+  const col = Math.round((x - padding) / cell);
+  const row = Math.round((y - padding) / cell);
+  if (!isInside(row, col)) return null;
+  const cx = padding + col * cell;
+  const cy = padding + row * cell;
+  const distance = Math.hypot(x - cx, y - cy);
+  if (distance > cell * 0.56) return null;
+  return { row, col };
+}
+
+function playLocalMove(row, col) {
+  if (state.gameOver || state.aiThinking) return;
+  if (!isInside(row, col) || state.board[row][col] !== EMPTY) return;
+
+  placeMove(row, col, state.currentPlayer, { sound: true });
+
+  if (finishTurnIfNeeded(row, col, state.currentPlayer)) return;
+  switchTurn();
+
+  if (state.mode === "ai" && state.currentPlayer === WHITE && !state.gameOver) {
+    scheduleAIMove();
+  }
+}
+
+function placeMove(row, col, player, options = {}) {
+  state.board[row][col] = player;
+  state.lastMove = { row, col, player };
+  state.history.push({ row, col, player, at: Date.now() });
+  if (options.sound) playSound("move");
+  drawBoard();
+}
+
+function finishTurnIfNeeded(row, col, player) {
+  if (checkWin(state.board, row, col, player)) {
+    endGame(player, `${playerName(player)}獲勝！`);
+    return true;
+  }
+  if (isFull(state.board)) {
+    endGame(EMPTY, "平手！棋盤已滿。");
+    return true;
+  }
+  return false;
+}
+
+function switchTurn() {
+  state.currentPlayer = otherPlayer(state.currentPlayer);
+  updateStatus();
+  startTurnTimer();
+  drawBoard();
+}
+
+function scheduleAIMove() {
+  state.aiThinking = true;
+  updateStatus("AI 思考中...");
+  window.setTimeout(() => {
+    if (state.gameOver || state.mode !== "ai") {
+      state.aiThinking = false;
+      return;
+    }
+    const move = chooseAIMove(state.board, WHITE, state.aiDifficulty);
+    if (move) {
+      placeMove(move.row, move.col, WHITE, { sound: true });
+      if (!finishTurnIfNeeded(move.row, move.col, WHITE)) {
+        switchTurn();
+      }
+    }
+    state.aiThinking = false;
+    updateStatus();
+  }, 260);
+}
+
+function undoLocalMove() {
+  if (!state.history.length || state.aiThinking) return;
+  hideOverlay();
+  state.gameOver = false;
+  state.winner = EMPTY;
+
+  const steps = state.mode === "ai" ? Math.min(2, state.history.length) : 1;
+  for (let i = 0; i < steps; i++) {
+    const move = state.history.pop();
+    if (!move) break;
+    state.board[move.row][move.col] = EMPTY;
+  }
+
+  const last = state.history[state.history.length - 1] || null;
+  state.lastMove = last ? { row: last.row, col: last.col, player: last.player } : null;
+  state.currentPlayer = state.mode === "ai" ? BLACK : (last ? otherPlayer(last.player) : BLACK);
+  updateStatus();
+  drawBoard();
+  startTurnTimer();
+  playSound("undo");
+}
+
+function endGame(winner, message) {
+  state.gameOver = true;
+  state.winner = winner;
+  clearInterval(timerHandle);
+  updateStatus(message);
+  showOverlay(winner === EMPTY ? "平手" : `${playerName(winner)}獲勝`, message);
+  drawBoard();
+  playSound(winner === EMPTY ? "draw" : "win");
+}
+
+function showOverlay(title, message) {
+  els.overlayTitle.textContent = title;
+  els.overlayMessage.textContent = message;
+  els.overlay.classList.remove("hidden");
+}
+
+function hideOverlay() {
+  els.overlay.classList.add("hidden");
+}
+
+function updateStatus(customMessage) {
+  if (customMessage) {
+    els.statusText.textContent = customMessage;
+  } else if (state.gameOver) {
+    els.statusText.textContent = state.winner ? `${playerName(state.winner)}獲勝！` : "平手！";
+  } else if (state.mode === "online") {
+    updateOnlineStatusText();
+  } else {
+    els.statusText.textContent = `輪到${playerName(state.currentPlayer)}`;
+  }
+
+  els.turnText.textContent = state.gameOver
+    ? "遊戲結束"
+    : `${playerName(state.currentPlayer)}行動中`;
+  els.turnOrb.classList.toggle("white", state.currentPlayer === WHITE);
+}
+
+function updateOnlineStatusText() {
+  if (!online.roomRef) {
+    els.statusText.textContent = "請建立或加入線上房間";
+    return;
+  }
+  if (!online.localColor) {
+    els.statusText.textContent = "正在等待座位資訊";
+    return;
+  }
+  if (state.gameOver) {
+    els.statusText.textContent = state.winner ? `${playerName(state.winner)}獲勝！` : "平手！";
+    return;
+  }
+  els.statusText.textContent = state.currentPlayer === online.localColor ? "輪到你下棋" : "等待對手下棋";
+}
+
+function playerName(player) {
+  return player === BLACK ? "黑棋" : player === WHITE ? "白棋" : "無人";
+}
+
+function otherPlayer(player) {
+  return player === BLACK ? WHITE : BLACK;
+}
+
+function isInside(row, col) {
+  return row >= 0 && row < BOARD_SIZE && col >= 0 && col < BOARD_SIZE;
+}
+
+function checkWin(board, row, col, player) {
+  const dirs = [[0, 1], [1, 0], [1, 1], [1, -1]];
+  for (const [dr, dc] of dirs) {
+    const total = 1
+      + countDirection(board, row, col, dr, dc, player)
+      + countDirection(board, row, col, -dr, -dc, player);
+    if (total >= 5) return true;
+  }
+  return false;
+}
+
+function countDirection(board, row, col, dr, dc, player) {
+  let count = 0;
+  let r = row + dr;
+  let c = col + dc;
+  while (isInside(r, c) && board[r][c] === player) {
+    count += 1;
+    r += dr;
+    c += dc;
+  }
+  return count;
+}
+
+function isFull(board) {
+  return board.every(row => row.every(cell => cell !== EMPTY));
+}
+
+function resizeCanvasForDisplay() {
+  els.canvas.width = CANVAS_SIZE;
+  els.canvas.height = CANVAS_SIZE;
+}
+
+function drawBoard() {
+  const styles = getComputedStyle(els.html);
+  const boardColor = styles.getPropertyValue("--board").trim() || "#d9b36a";
+  const lineColor = styles.getPropertyValue("--board-line").trim() || "#4a3824";
+  const accentColor = styles.getPropertyValue("--accent").trim() || "#0ea5b7";
+  const cell = CANVAS_SIZE / (BOARD_SIZE + 1);
+  const padding = cell;
+
+  ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+  ctx.fillStyle = boardColor;
+  ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+
+  drawWaterTexture(accentColor);
+
+  ctx.strokeStyle = lineColor;
+  ctx.lineWidth = 1.7;
+  ctx.lineCap = "round";
+
+  for (let i = 0; i < BOARD_SIZE; i++) {
+    const pos = padding + i * cell;
+    ctx.beginPath();
+    ctx.moveTo(padding, pos);
+    ctx.lineTo(CANVAS_SIZE - padding, pos);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(pos, padding);
+    ctx.lineTo(pos, CANVAS_SIZE - padding);
+    ctx.stroke();
+  }
+
+  drawStarPoints(cell, padding, lineColor);
+  drawStones(cell, padding, accentColor);
+}
+
+function drawWaterTexture(accentColor) {
+  ctx.save();
+  ctx.globalAlpha = 0.08;
+  ctx.strokeStyle = accentColor;
+  ctx.lineWidth = 2;
+  for (let y = 50; y < CANVAS_SIZE; y += 92) {
+    ctx.beginPath();
+    for (let x = -20; x <= CANVAS_SIZE + 20; x += 16) {
+      const wave = y + Math.sin((x + y) / 42) * 8;
+      if (x === -20) ctx.moveTo(x, wave);
+      else ctx.lineTo(x, wave);
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawStarPoints(cell, padding, lineColor) {
+  const points = [3, 7, 11];
+  ctx.fillStyle = lineColor;
+  for (const row of points) {
+    for (const col of points) {
+      ctx.beginPath();
+      ctx.arc(padding + col * cell, padding + row * cell, 4.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+
+function drawStones(cell, padding, accentColor) {
+  for (let row = 0; row < BOARD_SIZE; row++) {
+    for (let col = 0; col < BOARD_SIZE; col++) {
+      const player = state.board[row][col];
+      if (player !== EMPTY) drawStone(row, col, player, cell, padding);
+    }
+  }
+
+  if (state.lastMove) {
+    const x = padding + state.lastMove.col * cell;
+    const y = padding + state.lastMove.row * cell;
+    ctx.save();
+    ctx.strokeStyle = accentColor;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(x, y, cell * 0.18, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function drawStone(row, col, player, cell, padding) {
+  const x = padding + col * cell;
+  const y = padding + row * cell;
+  const radius = cell * 0.39;
+  const gradient = ctx.createRadialGradient(
+    x - radius * 0.35,
+    y - radius * 0.42,
+    radius * 0.15,
+    x,
+    y,
+    radius
+  );
+
+  if (player === BLACK) {
+    gradient.addColorStop(0, "#5f6570");
+    gradient.addColorStop(0.52, "#1f2937");
+    gradient.addColorStop(1, "#050607");
+  } else {
+    gradient.addColorStop(0, "#ffffff");
+    gradient.addColorStop(0.68, "#f5f7fb");
+    gradient.addColorStop(1, "#cbd5e1");
+  }
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, Math.PI * 2);
+  ctx.fillStyle = gradient;
+  ctx.shadowColor = "rgba(0,0,0,0.28)";
+  ctx.shadowBlur = 9;
+  ctx.shadowOffsetY = 4;
+  ctx.fill();
+  ctx.shadowColor = "transparent";
+  ctx.strokeStyle = player === BLACK ? "rgba(0,0,0,0.45)" : "rgba(80,80,80,0.22)";
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+  ctx.restore();
+}
+
+function chooseAIMove(board, aiPlayer, difficulty) {
+  const opponent = otherPlayer(aiPlayer);
+  const emptyCount = board.flat().filter(v => v === EMPTY).length;
+  if (emptyCount === BOARD_SIZE * BOARD_SIZE) return { row: 7, col: 7 };
+
+  const radius = difficulty <= 4 ? 1 : difficulty <= 12 ? 2 : 3;
+  const candidates = getCandidateMoves(board, radius);
+
+  for (const move of candidates) {
+    board[move.row][move.col] = aiPlayer;
+    const wins = checkWin(board, move.row, move.col, aiPlayer);
+    board[move.row][move.col] = EMPTY;
+    if (wins) return move;
+  }
+
+  for (const move of candidates) {
+    board[move.row][move.col] = opponent;
+    const blocksWin = checkWin(board, move.row, move.col, opponent);
+    board[move.row][move.col] = EMPTY;
+    if (blocksWin && difficulty >= 5) return move;
+  }
+
+  const scored = candidates.map(move => {
+    const offensive = scoreMove(board, move.row, move.col, aiPlayer);
+    const defensive = scoreMove(board, move.row, move.col, opponent);
+    const centerBias = 16 - Math.hypot(move.row - 7, move.col - 7);
+    const defenseWeight = 0.75 + difficulty / 24;
+    let score = offensive + defensive * defenseWeight + centerBias;
+
+    if (difficulty >= 13) {
+      board[move.row][move.col] = aiPlayer;
+      const reply = bestImmediateReplyScore(board, opponent, difficulty >= 18 ? 10 : 6);
+      board[move.row][move.col] = EMPTY;
+      score -= reply * (0.34 + difficulty / 60);
+    }
+
+    const noise = (21 - difficulty) * (Math.random() * 56);
+    return { ...move, score: score + noise };
+  }).sort((a, b) => b.score - a.score);
+
+  if (!scored.length) return null;
+  const poolSize = difficulty <= 3 ? Math.min(10, scored.length)
+    : difficulty <= 7 ? Math.min(5, scored.length)
+    : difficulty <= 12 ? Math.min(3, scored.length)
+    : 1;
+  return scored[Math.floor(Math.random() * poolSize)];
+}
+
+function getCandidateMoves(board, radius) {
+  const set = new Set();
+  let hasStone = false;
+  for (let row = 0; row < BOARD_SIZE; row++) {
+    for (let col = 0; col < BOARD_SIZE; col++) {
+      if (board[row][col] !== EMPTY) {
+        hasStone = true;
+        for (let dr = -radius; dr <= radius; dr++) {
+          for (let dc = -radius; dc <= radius; dc++) {
+            const r = row + dr;
+            const c = col + dc;
+            if (isInside(r, c) && board[r][c] === EMPTY) set.add(`${r},${c}`);
+          }
+        }
+      }
+    }
+  }
+  if (!hasStone) return [{ row: 7, col: 7 }];
+  return [...set].map(key => {
+    const [row, col] = key.split(",").map(Number);
+    return { row, col };
+  });
+}
+
+function bestImmediateReplyScore(board, player, limit) {
+  return getCandidateMoves(board, 2)
+    .map(move => scoreMove(board, move.row, move.col, player))
+    .sort((a, b) => b - a)
+    .slice(0, limit)
+    .reduce((max, score) => Math.max(max, score), 0);
+}
+
+function scoreMove(board, row, col, player) {
+  if (board[row][col] !== EMPTY) return -Infinity;
+  board[row][col] = player;
+  let total = 0;
+  const dirs = [[0, 1], [1, 0], [1, 1], [1, -1]];
+  for (const [dr, dc] of dirs) {
+    const forward = scanLine(board, row, col, dr, dc, player);
+    const backward = scanLine(board, row, col, -dr, -dc, player);
+    const count = 1 + forward.count + backward.count;
+    const openEnds = Number(forward.open) + Number(backward.open);
+    total += patternScore(count, openEnds);
+  }
+  board[row][col] = EMPTY;
+  return total;
+}
+
+function scanLine(board, row, col, dr, dc, player) {
+  let count = 0;
+  let r = row + dr;
+  let c = col + dc;
+  while (isInside(r, c) && board[r][c] === player) {
+    count += 1;
+    r += dr;
+    c += dc;
+  }
+  return { count, open: isInside(r, c) && board[r][c] === EMPTY };
+}
+
+function patternScore(count, openEnds) {
+  if (count >= 5) return 1_000_000;
+  if (count === 4 && openEnds === 2) return 180_000;
+  if (count === 4 && openEnds === 1) return 26_000;
+  if (count === 3 && openEnds === 2) return 9_000;
+  if (count === 3 && openEnds === 1) return 1_500;
+  if (count === 2 && openEnds === 2) return 700;
+  if (count === 2 && openEnds === 1) return 110;
+  if (count === 1 && openEnds === 2) return 18;
+  return 2;
+}
+
+async function ensureFirebase() {
+  if (online.ready) return;
+  if (!firebaseConfig || !firebaseConfig.apiKey || !firebaseConfig.projectId) {
+    throw new Error("尚未設定 Firebase。請先編輯 js/firebase-config.js。 ");
+  }
+
+  if (!initializeApp) {
+    const [appMod, authMod, firestoreMod] = await Promise.all([
+      import("https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js"),
+      import("https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js"),
+      import("https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js")
+    ]);
+    initializeApp = appMod.initializeApp;
+    getAuth = authMod.getAuth;
+    signInAnonymously = authMod.signInAnonymously;
+    getFirestore = firestoreMod.getFirestore;
+    doc = firestoreMod.doc;
+    getDoc = firestoreMod.getDoc;
+    setDoc = firestoreMod.setDoc;
+    updateDoc = firestoreMod.updateDoc;
+    onSnapshot = firestoreMod.onSnapshot;
+    runTransaction = firestoreMod.runTransaction;
+    serverTimestamp = firestoreMod.serverTimestamp;
+  }
+
+  online.app = initializeApp(firebaseConfig);
+  online.auth = getAuth(online.app);
+  const cred = await signInAnonymously(online.auth);
+  online.uid = cred.user.uid;
+  online.db = getFirestore(online.app);
+  online.ready = true;
+}
+
+async function createOnlineRoom() {
+  try {
+    setButtonsBusy(true);
+    await ensureFirebase();
+    const roomCode = generateRoomCode();
+    const nickname = getNickname();
+    const roomRef = doc(online.db, "gomokuRooms", roomCode);
+    await setDoc(roomRef, {
+      roomCode,
+      board: flattenBoard(createBoard()),
+      currentPlayer: BLACK,
+      status: "playing",
+      winner: EMPTY,
+      players: {
+        black: { uid: online.uid, name: nickname },
+        white: null
+      },
+      moveHistory: [],
+      lastMove: null,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+    subscribeRoom(roomCode);
+    playSound("start");
+  } catch (error) {
+    showError(error);
+  } finally {
+    setButtonsBusy(false);
+  }
+}
+
+async function joinOnlineRoom() {
+  try {
+    setButtonsBusy(true);
+    await ensureFirebase();
+    const roomCode = normalizeRoomCode(els.roomCodeInput.value);
+    if (!roomCode) throw new Error("請輸入房號。");
+    const roomRef = doc(online.db, "gomokuRooms", roomCode);
+    const nickname = getNickname();
+
+    await runTransaction(online.db, async transaction => {
+      const snap = await transaction.get(roomRef);
+      if (!snap.exists()) throw new Error("找不到這個房間。");
+      const data = snap.data();
+      const players = data.players || {};
+      if (players.black?.uid === online.uid || players.white?.uid === online.uid) return;
+      if (!players.white) {
+        transaction.update(roomRef, {
+          "players.white": { uid: online.uid, name: nickname },
+          updatedAt: serverTimestamp()
+        });
+        return;
+      }
+      throw new Error("房間已滿，請建立新房間。");
+    });
+
+    subscribeRoom(roomCode);
+    playSound("start");
+  } catch (error) {
+    showError(error);
+  } finally {
+    setButtonsBusy(false);
+  }
+}
+
+function subscribeRoom(roomCode) {
+  if (online.unsubscribe) online.unsubscribe();
+  online.roomCode = normalizeRoomCode(roomCode);
+  online.roomRef = doc(online.db, "gomokuRooms", online.roomCode);
+  els.roomCodeInput.value = online.roomCode;
+  els.copyRoomBtn.classList.remove("hidden");
+  online.unsubscribe = onSnapshot(online.roomRef, snap => {
+    if (!snap.exists()) {
+      els.roomInfo.textContent = "房間不存在";
+      return;
+    }
+    applyOnlineRoom(snap.data());
+  }, showError);
+}
+
+function applyOnlineRoom(data) {
+  const players = data.players || {};
+  online.localColor = players.black?.uid === online.uid ? BLACK
+    : players.white?.uid === online.uid ? WHITE
+    : null;
+
+  state.board = unflattenBoard(data.board || []);
+  state.currentPlayer = data.currentPlayer || BLACK;
+  state.history = Array.isArray(data.moveHistory) ? data.moveHistory : [];
+  state.lastMove = data.lastMove || null;
+  state.gameOver = data.status === "ended";
+  state.winner = data.winner || EMPTY;
+
+  const blackName = players.black?.name || "等待中";
+  const whiteName = players.white?.name || "等待中";
+  els.roomInfo.textContent = `房號 ${data.roomCode || online.roomCode}`;
+  els.playerInfo.textContent = `黑：${blackName}｜白：${whiteName}｜你是：${online.localColor ? playerName(online.localColor) : "觀戰"}`;
+
+  if (state.gameOver) {
+    clearInterval(timerHandle);
+    showOverlay(state.winner ? `${playerName(state.winner)}獲勝` : "平手", state.winner ? `${playerName(state.winner)}獲勝！` : "平手！");
+  } else {
+    hideOverlay();
+    startTurnTimer();
+  }
+  updateStatus();
+  drawBoard();
+}
+
+async function playOnlineMove(row, col) {
+  if (online.busy || !online.roomRef || !online.localColor || state.gameOver) return;
+  if (state.currentPlayer !== online.localColor) return;
+  if (state.board[row][col] !== EMPTY) return;
+
+  try {
+    online.busy = true;
+    await runTransaction(online.db, async transaction => {
+      const snap = await transaction.get(online.roomRef);
+      if (!snap.exists()) throw new Error("房間不存在。");
+      const data = snap.data();
+      if (data.status === "ended") return;
+      if (data.currentPlayer !== online.localColor) throw new Error("還沒輪到你。");
+      const flat = [...data.board];
+      const index = row * BOARD_SIZE + col;
+      if (flat[index] !== EMPTY) throw new Error("這裡已經有棋子。");
+      flat[index] = online.localColor;
+      const board = unflattenBoard(flat);
+      const winner = checkWin(board, row, col, online.localColor) ? online.localColor : EMPTY;
+      const draw = !winner && flat.every(v => v !== EMPTY);
+      const move = { row, col, player: online.localColor, uid: online.uid, at: Date.now() };
+      const history = Array.isArray(data.moveHistory) ? [...data.moveHistory, move] : [move];
+      transaction.update(online.roomRef, {
+        board: flat,
+        currentPlayer: winner || draw ? data.currentPlayer : otherPlayer(online.localColor),
+        status: winner || draw ? "ended" : "playing",
+        winner,
+        moveHistory: history,
+        lastMove: move,
+        updatedAt: serverTimestamp()
+      });
+    });
+    playSound("move");
+  } catch (error) {
+    showError(error);
+  } finally {
+    online.busy = false;
+  }
+}
+
+async function resetOnlineRoom() {
+  if (!online.roomRef) return;
+  try {
+    await updateDoc(online.roomRef, {
+      board: flattenBoard(createBoard()),
+      currentPlayer: BLACK,
+      status: "playing",
+      winner: EMPTY,
+      moveHistory: [],
+      lastMove: null,
+      updatedAt: serverTimestamp()
+    });
+    playSound("start");
+  } catch (error) {
+    showError(error);
+  }
+}
+
+async function undoOnlineMove() {
+  if (!online.roomRef || !online.localColor || online.busy) return;
+  try {
+    online.busy = true;
+    await runTransaction(online.db, async transaction => {
+      const snap = await transaction.get(online.roomRef);
+      if (!snap.exists()) throw new Error("房間不存在。");
+      const data = snap.data();
+      const history = Array.isArray(data.moveHistory) ? [...data.moveHistory] : [];
+      const last = history[history.length - 1];
+      if (!last) return;
+      if (last.uid !== online.uid) throw new Error("線上模式只能撤回自己剛下、且對手尚未回應的那一手。");
+      history.pop();
+      const flat = [...data.board];
+      flat[last.row * BOARD_SIZE + last.col] = EMPTY;
+      const previous = history[history.length - 1] || null;
+      transaction.update(online.roomRef, {
+        board: flat,
+        currentPlayer: last.player,
+        status: "playing",
+        winner: EMPTY,
+        moveHistory: history,
+        lastMove: previous,
+        updatedAt: serverTimestamp()
+      });
+    });
+    playSound("undo");
+  } catch (error) {
+    showError(error);
+  } finally {
+    online.busy = false;
+  }
+}
+
+function flattenBoard(board) {
+  return board.flat();
+}
+
+function unflattenBoard(flat) {
+  const safe = Array.isArray(flat) && flat.length === BOARD_SIZE * BOARD_SIZE
+    ? flat
+    : flattenBoard(createBoard());
+  const board = createBoard();
+  for (let i = 0; i < safe.length; i++) {
+    board[Math.floor(i / BOARD_SIZE)][i % BOARD_SIZE] = Number(safe[i]) || EMPTY;
+  }
+  return board;
+}
+
+function generateRoomCode() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let code = "";
+  for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return code;
+}
+
+function normalizeRoomCode(value) {
+  return String(value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
+}
+
+function getNickname() {
+  const name = els.nicknameInput.value.trim().slice(0, 18) || `玩家${Math.floor(Math.random() * 900 + 100)}`;
+  els.nicknameInput.value = name;
+  localStorage.setItem(`${STORAGE_PREFIX}:nickname`, name);
+  return name;
+}
+
+async function copyRoomCode() {
+  if (!online.roomCode) return;
+  try {
+    await navigator.clipboard.writeText(online.roomCode);
+    els.copyRoomBtn.textContent = "已複製";
+    window.setTimeout(() => els.copyRoomBtn.textContent = "複製房號", 1200);
+  } catch {
+    els.roomCodeInput.select();
+  }
+}
+
+function setButtonsBusy(isBusy) {
+  els.createRoomBtn.disabled = isBusy;
+  els.joinRoomBtn.disabled = isBusy;
+}
+
+function showError(error) {
+  const message = error?.message || String(error);
+  els.statusText.textContent = message;
+  console.error(error);
+}
+
+function playSound(kind = "move") {
+  if (!state.soundEnabled) return;
+  try {
+    audioContext ||= new (window.AudioContext || window.webkitAudioContext)();
+    const now = audioContext.currentTime;
+    const gain = audioContext.createGain();
+    gain.connect(audioContext.destination);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.12, now + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + soundDuration(kind));
+
+    const osc = audioContext.createOscillator();
+    osc.connect(gain);
+    osc.type = oscillatorType();
+    const [start, end] = soundFrequencies(kind);
+    osc.frequency.setValueAtTime(start, now);
+    osc.frequency.exponentialRampToValueAtTime(end, now + soundDuration(kind));
+    osc.start(now);
+    osc.stop(now + soundDuration(kind) + 0.02);
+  } catch {
+    // Some browsers block audio before the first user gesture. Ignore silently.
+  }
+}
+
+function oscillatorType() {
+  switch (state.soundType) {
+    case "sonar": return "sine";
+    case "shell": return "triangle";
+    case "soft": return "sine";
+    default: return "sine";
+  }
+}
+
+function soundFrequencies(kind) {
+  const base = {
+    bubble: { move: [360, 620], win: [520, 980], undo: [420, 240], start: [300, 520], ui: [500, 700], draw: [260, 260] },
+    sonar: { move: [740, 420], win: [640, 1200], undo: [500, 280], start: [360, 760], ui: [520, 620], draw: [360, 320] },
+    shell: { move: [260, 390], win: [330, 880], undo: [330, 180], start: [220, 440], ui: [300, 460], draw: [220, 200] },
+    soft: { move: [440, 520], win: [523, 784], undo: [440, 330], start: [392, 523], ui: [494, 554], draw: [330, 330] }
+  };
+  return base[state.soundType]?.[kind] || base.bubble.move;
+}
+
+function soundDuration(kind) {
+  if (kind === "win") return 0.38;
+  if (kind === "start") return 0.22;
+  if (kind === "draw") return 0.32;
+  return 0.14;
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}

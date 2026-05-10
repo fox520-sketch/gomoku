@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="zh-Hant" data-theme="ocean">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0ea5b7" />
+    <title>海洋五子棋 Gomoku</title>
+    <link rel="stylesheet" href="./css/style.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Gomoku Web Game</p>
+          <h1>海洋五子棋</h1>
+          <p class="subtitle">簡約清爽、手機友善、AI 對戰與 Firebase 線上雙人對戰。</p>
+        </div>
+        <div class="hero-card" aria-live="polite">
+          <span class="small-label">目前狀態</span>
+          <strong id="statusText">準備開始</strong>
+          <span id="turnText" class="muted">黑棋先手</span>
+        </div>
+      </header>
+
+      <main class="layout">
+        <section class="board-section" aria-label="五子棋棋盤區">
+          <div class="board-toolbar">
+            <div class="timer-card">
+              <span>黑棋</span>
+              <strong id="blackTimer">--:--</strong>
+            </div>
+            <div class="turn-orb" id="turnOrb" aria-hidden="true"></div>
+            <div class="timer-card">
+              <span>白棋</span>
+              <strong id="whiteTimer">--:--</strong>
+            </div>
+          </div>
+
+          <div class="canvas-wrap">
+            <canvas id="boardCanvas" width="720" height="720" aria-label="15 乘 15 五子棋棋盤"></canvas>
+            <div id="boardOverlay" class="board-overlay hidden">
+              <strong id="overlayTitle">遊戲結束</strong>
+              <span id="overlayMessage">按重新開始再玩一局。</span>
+            </div>
+          </div>
+
+          <div class="action-row">
+            <button id="newGameBtn" class="primary">重新開始</button>
+            <button id="undoBtn">悔棋</button>
+            <button id="copyRoomBtn" class="ghost hidden">複製房號</button>
+          </div>
+        </section>
+
+        <aside class="control-panel" aria-label="遊戲設定">
+          <section class="panel-block">
+            <h2>模式</h2>
+            <label>
+              對戰模式
+              <select id="modeSelect">
+                <option value="ai">單人 vs 電腦 AI</option>
+                <option value="local">同裝置雙人</option>
+                <option value="online">線上雙人 Firebase</option>
+              </select>
+            </label>
+            <label id="aiDifficultyWrap">
+              AI 難易度：<span id="difficultyValue">10</span> / 20
+              <input id="difficultyRange" type="range" min="1" max="20" value="10" />
+            </label>
+          </section>
+
+          <section class="panel-block">
+            <h2>外觀與音效</h2>
+            <label>
+              風格主題
+              <select id="themeSelect">
+                <option value="ocean">海洋風</option>
+                <option value="eye">護眼風</option>
+                <option value="paper">電子紙風</option>
+                <option value="twilight">暮光風</option>
+                <option value="sakura">櫻花風</option>
+                <option value="forest">森林風</option>
+                <option value="night">夜航風</option>
+              </select>
+            </label>
+            <label>
+              回合計時
+              <select id="timerSelect">
+                <option value="0">不計時</option>
+                <option value="30">每手 30 秒</option>
+                <option value="60">每手 60 秒</option>
+                <option value="180">每手 3 分鐘</option>
+              </select>
+            </label>
+            <div class="inline-controls">
+              <label class="switch-label">
+                <input id="soundToggle" type="checkbox" checked />
+                <span>音效</span>
+              </label>
+              <label class="compact-label">
+                音效類型
+                <select id="soundSelect">
+                  <option value="bubble">水泡</option>
+                  <option value="sonar">聲納</option>
+                  <option value="shell">貝殼</option>
+                  <option value="soft">柔和</option>
+                </select>
+              </label>
+            </div>
+          </section>
+
+          <section id="onlinePanel" class="panel-block online-panel hidden">
+            <h2>線上雙人</h2>
+            <p class="notice">第一次使用請先在 <code>js/firebase-config.js</code> 填入 Firebase Web App 設定。</p>
+            <label>
+              暱稱
+              <input id="nicknameInput" type="text" maxlength="18" placeholder="例如：Fox" />
+            </label>
+            <div class="split-row">
+              <button id="createRoomBtn" class="primary">建立房間</button>
+              <button id="joinRoomBtn">加入房間</button>
+            </div>
+            <label>
+              房號
+              <input id="roomCodeInput" type="text" maxlength="8" placeholder="輸入或建立房號" />
+            </label>
+            <div class="room-card">
+              <span class="small-label">房間資訊</span>
+              <strong id="roomInfo">尚未連線</strong>
+              <span id="playerInfo" class="muted">你尚未加入房間</span>
+            </div>
+          </section>
+
+          <section class="panel-block tips">
+            <h2>玩法提示</h2>
+            <ul>
+              <li>黑棋先手，任一方向連續 5 顆即獲勝。</li>
+              <li>手機上直接點棋盤交叉點即可落子。</li>
+              <li>線上模式會同步棋盤、回合、勝負與悔棋狀態。</li>
+            </ul>
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <script type="module" src="./js/app.js"></script>
+  </body>
+</html>
