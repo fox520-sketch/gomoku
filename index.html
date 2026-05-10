@@ -53,6 +53,8 @@
           <div class="action-row">
             <button id="newGameBtn" class="primary">重新開始</button>
             <button id="undoBtn">悔棋</button>
+            <button id="confirmMoveBtn" class="primary hidden">確認落子</button>
+            <button id="cancelPreviewBtn" class="ghost hidden">取消預覽</button>
             <button id="copyRoomBtn" class="ghost hidden">複製邀請連結</button>
             <button id="installBtn" class="ghost hidden">安裝到手機</button>
           </div>
@@ -113,6 +115,10 @@
                 </select>
               </label>
             </div>
+            <label class="switch-label wide-switch">
+              <input id="confirmMoveToggle" type="checkbox" />
+              <span>手機確認落子：先預覽，再確認送出</span>
+            </label>
           </section>
 
           <section id="onlinePanel" class="panel-block online-panel hidden">
@@ -136,10 +142,22 @@
               <span id="playerInfo" class="muted">你尚未加入房間</span>
             </div>
             <div id="connectionInfo" class="presence-card" data-state="idle">尚未連線到線上房間</div>
+            <div id="undoRequestCard" class="undo-request-card hidden" aria-live="polite">
+              <strong>悔棋請求</strong>
+              <p id="undoRequestText">尚無悔棋請求</p>
+              <div class="split-row">
+                <button id="acceptUndoBtn" class="primary">同意悔棋</button>
+                <button id="rejectUndoBtn">拒絕</button>
+              </div>
+            </div>
             <label id="inviteLinkWrap" class="invite-link-wrap hidden">
               邀請連結
               <input id="inviteLinkInput" type="text" readonly aria-label="可分享給朋友的房間邀請連結" />
             </label>
+            <div id="qrCard" class="qr-card hidden">
+              <img id="qrImage" alt="邀請連結 QR Code" />
+              <span>掃描 QR Code，朋友可直接加入房間。</span>
+            </div>
           </section>
 
           <section class="panel-block tips">
@@ -148,7 +166,9 @@
               <li>黑棋先手，任一方向連續 5 顆即獲勝。</li>
               <li>手機上直接點棋盤交叉點即可落子。</li>
               <li>線上模式會同步棋盤、回合、勝負與悔棋狀態。</li>
-              <li>建立房間後可複製邀請連結，朋友開啟後會自動帶入房號。</li>
+              <li>建立房間後可複製邀請連結，也可讓朋友掃 QR Code 加入。</li>
+              <li>線上悔棋會先送出請求，對手同意後才會撤回。</li>
+              <li>手機確認落子可避免誤觸：先預覽，再確認送出。</li>
               <li>獲勝時會顯示連線動畫，最後一步會以亮點標記。</li>
               <li>支援 PWA，手機瀏覽器可以加入主畫面。</li>
             </ul>

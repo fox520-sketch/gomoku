@@ -26,7 +26,7 @@ service cloud.firestore {
   function allowedRoomKeys() {
     return [
       'roomCode', 'board', 'currentPlayer', 'status', 'winner',
-      'players', 'moveHistory', 'lastMove', 'createdAt', 'updatedAt'
+      'players', 'moveHistory', 'lastMove', 'undoRequest', 'createdAt', 'updatedAt'
     ];
   }
 
@@ -47,7 +47,8 @@ service cloud.firestore {
       && (data.players.white == null || validPlayer(data.players.white))
       && data.moveHistory is list
       && data.moveHistory.size() <= 225
-      && (data.lastMove == null || data.lastMove is map);
+      && (data.lastMove == null || data.lastMove is map)
+      && (!data.keys().hasAny(['undoRequest']) || data.undoRequest == null || data.undoRequest is map);
   }
 
   function validColor(color) {
@@ -107,7 +108,8 @@ service cloud.firestore {
       && request.resource.data.status == resource.data.status
       && request.resource.data.winner == resource.data.winner
       && request.resource.data.moveHistory == resource.data.moveHistory
-      && request.resource.data.lastMove == resource.data.lastMove;
+      && request.resource.data.lastMove == resource.data.lastMove
+      && request.resource.data.undoRequest == resource.data.undoRequest;
   }
 
   function validPlayerUpdate() {

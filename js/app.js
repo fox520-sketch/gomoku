@@ -38,6 +38,7 @@ const els = {
   timerSelect: document.getElementById("timerSelect"),
   soundToggle: document.getElementById("soundToggle"),
   soundSelect: document.getElementById("soundSelect"),
+  confirmMoveToggle: document.getElementById("confirmMoveToggle"),
   onlinePanel: document.getElementById("onlinePanel"),
   nicknameInput: document.getElementById("nicknameInput"),
   roomCodeInput: document.getElementById("roomCodeInput"),
@@ -49,9 +50,17 @@ const els = {
   roomInfo: document.getElementById("roomInfo"),
   playerInfo: document.getElementById("playerInfo"),
   connectionInfo: document.getElementById("connectionInfo"),
+  undoRequestCard: document.getElementById("undoRequestCard"),
+  undoRequestText: document.getElementById("undoRequestText"),
+  acceptUndoBtn: document.getElementById("acceptUndoBtn"),
+  rejectUndoBtn: document.getElementById("rejectUndoBtn"),
+  qrCard: document.getElementById("qrCard"),
+  qrImage: document.getElementById("qrImage"),
   installBtn: document.getElementById("installBtn"),
   newGameBtn: document.getElementById("newGameBtn"),
-  undoBtn: document.getElementById("undoBtn")
+  undoBtn: document.getElementById("undoBtn"),
+  confirmMoveBtn: document.getElementById("confirmMoveBtn"),
+  cancelPreviewBtn: document.getElementById("cancelPreviewBtn")
 };
 
 const ctx = els.canvas.getContext("2d");
@@ -72,6 +81,9 @@ let state = {
   remaining: { [BLACK]: 0, [WHITE]: 0 },
   soundEnabled: true,
   soundType: "bubble",
+  confirmMove: false,
+  pendingMove: null,
+  undoRequest: null,
   aiThinking: false
 };
 
@@ -120,6 +132,9 @@ function hydratePreferences() {
   const timer = Number(localStorage.getItem(`${STORAGE_PREFIX}:timer`) || 0);
   const soundEnabled = localStorage.getItem(`${STORAGE_PREFIX}:soundEnabled`) !== "false";
   const soundType = localStorage.getItem(`${STORAGE_PREFIX}:soundType`) || "bubble";
+  const savedConfirmMove = localStorage.getItem(`${STORAGE_PREFIX}:confirmMove`);
+  const defaultConfirmMove = window.matchMedia?.("(pointer: coarse)")?.matches || false;
+  const confirmMove = savedConfirmMove === null ? defaultConfirmMove : savedConfirmMove === "true";
   const nickname = localStorage.getItem(`${STORAGE_PREFIX}:nickname`) || "";
 
   state.mode = mode;
@@ -127,6 +142,7 @@ function hydratePreferences() {
   state.timerLimit = timer;
   state.soundEnabled = soundEnabled;
   state.soundType = soundType;
+  state.confirmMove = confirmMove;
 
   els.html.dataset.theme = theme;
   els.themeSelect.value = theme;
@@ -136,6 +152,7 @@ function hydratePreferences() {
   els.timerSelect.value = String(timer);
   els.soundToggle.checked = soundEnabled;
   els.soundSelect.value = soundType;
+  if (els.confirmMoveToggle) els.confirmMoveToggle.checked = confirmMove;
   els.nicknameInput.value = nickname;
   togglePanels();
 }
@@ -152,14 +169,23 @@ function bindEvents() {
   });
 
   els.undoBtn.addEventListener("click", () => {
-    if (state.mode === "online") undoOnlineMove();
+    if (state.mode === "online") requestOnlineUndo();
     else undoLocalMove();
   });
+
+  if (els.confirmMoveBtn) {
+    els.confirmMoveBtn.addEventListener("click", commitPendingMove);
+  }
+
+  if (els.cancelPreviewBtn) {
+    els.cancelPreviewBtn.addEventListener("click", () => clearPendingMove(true));
+  }
 
   els.modeSelect.addEventListener("change", () => {
     state.mode = els.modeSelect.value;
     localStorage.setItem(`${STORAGE_PREFIX}:mode`, state.mode);
     togglePanels();
+    clearPendingMove(true);
     if (state.mode !== "online") {
       stopPresenceHeartbeat();
       clearInviteFromUrl();
@@ -198,6 +224,16 @@ function bindEvents() {
     playSound("ui");
   });
 
+  if (els.confirmMoveToggle) {
+    els.confirmMoveToggle.addEventListener("change", () => {
+      state.confirmMove = els.confirmMoveToggle.checked;
+      localStorage.setItem(`${STORAGE_PREFIX}:confirmMove`, String(state.confirmMove));
+      clearPendingMove(true);
+      updateStatus(state.confirmMove ? "已開啟確認落子：點棋盤後請再確認。" : "已關閉確認落子。");
+      playSound("ui");
+    });
+  }
+
   els.nicknameInput.addEventListener("change", () => {
     localStorage.setItem(`${STORAGE_PREFIX}:nickname`, els.nicknameInput.value.trim());
   });
@@ -205,6 +241,8 @@ function bindEvents() {
   els.createRoomBtn.addEventListener("click", createOnlineRoom);
   els.joinRoomBtn.addEventListener("click", joinOnlineRoom);
   els.copyRoomBtn.addEventListener("click", copyRoomCode);
+  if (els.acceptUndoBtn) els.acceptUndoBtn.addEventListener("click", () => respondUndoRequest(true));
+  if (els.rejectUndoBtn) els.rejectUndoBtn.addEventListener("click", () => respondUndoRequest(false));
   if (els.inviteLinkInput) {
     els.inviteLinkInput.addEventListener("click", () => els.inviteLinkInput.select());
   }
@@ -279,6 +317,10 @@ function startNewGame(options = {}) {
   state.currentPlayer = BLACK;
   state.history = [];
   state.lastMove = null;
+  state.pendingMove = null;
+  state.undoRequest = null;
+  updateConfirmControls();
+  updateUndoRequestUi(null);
   state.gameOver = false;
   state.winner = EMPTY;
   state.winLine = null;
@@ -352,11 +394,71 @@ function handleBoardPointer(event) {
   event.preventDefault();
   const pos = pointerToCell(event);
   if (!pos) return;
-  if (state.mode === "online") {
-    playOnlineMove(pos.row, pos.col);
-  } else {
-    playLocalMove(pos.row, pos.col);
+
+  if (state.confirmMove) {
+    stagePendingMove(pos.row, pos.col);
+    return;
   }
+
+  commitMove(pos.row, pos.col);
+}
+
+function commitMove(row, col) {
+  clearPendingMove(false);
+  if (state.mode === "online") {
+    playOnlineMove(row, col);
+  } else {
+    playLocalMove(row, col);
+  }
+  updateConfirmControls();
+}
+
+function stagePendingMove(row, col) {
+  if (!canPlaceAt(row, col)) return;
+
+  const sameMove = state.pendingMove
+    && state.pendingMove.row === row
+    && state.pendingMove.col === col;
+
+  if (sameMove) {
+    commitPendingMove();
+    return;
+  }
+
+  state.pendingMove = { row, col, player: state.currentPlayer };
+  updateConfirmControls();
+  drawBoard();
+  updateStatus("已預覽落子，請按「確認落子」或再點同一格送出。");
+  playSound("ui");
+}
+
+function commitPendingMove() {
+  if (!state.pendingMove) return;
+  const { row, col } = state.pendingMove;
+  commitMove(row, col);
+}
+
+function clearPendingMove(shouldRedraw = false) {
+  state.pendingMove = null;
+  updateConfirmControls();
+  if (shouldRedraw) {
+    drawBoard();
+    updateStatus();
+  }
+}
+
+function updateConfirmControls() {
+  const hasPending = Boolean(state.pendingMove);
+  if (els.confirmMoveBtn) els.confirmMoveBtn.classList.toggle("hidden", !hasPending);
+  if (els.cancelPreviewBtn) els.cancelPreviewBtn.classList.toggle("hidden", !hasPending);
+}
+
+function canPlaceAt(row, col) {
+  if (!isInside(row, col) || state.board[row][col] !== EMPTY || state.gameOver) return false;
+  if (state.mode === "online") {
+    return Boolean(online.roomRef && online.localColor && state.currentPlayer === online.localColor && !online.busy);
+  }
+  return !state.aiThinking;
 }
 
 function pointerToCell(event) {
@@ -412,6 +514,7 @@ function finishTurnIfNeeded(row, col, player) {
 }
 
 function switchTurn() {
+  clearPendingMove(false);
   state.currentPlayer = otherPlayer(state.currentPlayer);
   updateStatus();
   startTurnTimer();
@@ -440,6 +543,7 @@ function scheduleAIMove() {
 
 function undoLocalMove() {
   if (!state.history.length || state.aiThinking) return;
+  clearPendingMove(false);
   hideOverlay();
   state.gameOver = false;
   state.winner = EMPTY;
@@ -463,6 +567,7 @@ function undoLocalMove() {
 }
 
 function endGame(winner, message) {
+  clearPendingMove(false);
   state.gameOver = true;
   state.winner = winner;
   clearInterval(timerHandle);
@@ -511,6 +616,12 @@ function updateOnlineStatusText() {
   }
   if (state.gameOver) {
     els.statusText.textContent = state.winner ? `${playerName(state.winner)}獲勝！` : "平手！";
+    return;
+  }
+  if (state.undoRequest) {
+    els.statusText.textContent = state.undoRequest.fromUid === online.uid
+      ? "已送出悔棋請求，等待對手回覆"
+      : "對手請求悔棋，請選擇同意或拒絕";
     return;
   }
   if (online.localColor === BLACK && !online.players?.white) {
@@ -673,7 +784,35 @@ function drawStones(cell, padding, accentColor) {
     }
   }
 
+  if (state.pendingMove && state.board[state.pendingMove.row]?.[state.pendingMove.col] === EMPTY) {
+    drawPendingStone(state.pendingMove.row, state.pendingMove.col, state.pendingMove.player, cell, padding, accentColor);
+  }
+
   if (state.lastMove) drawLastMoveMarker(cell, padding, accentColor);
+}
+
+function drawPendingStone(row, col, player, cell, padding, accentColor) {
+  const x = padding + col * cell;
+  const y = padding + row * cell;
+
+  ctx.save();
+  ctx.globalAlpha = 0.58;
+  ctx.setLineDash([8, 6]);
+  ctx.strokeStyle = accentColor;
+  ctx.lineWidth = 4;
+  ctx.shadowColor = accentColor;
+  ctx.shadowBlur = 14;
+  ctx.beginPath();
+  ctx.arc(x, y, cell * 0.4, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.setLineDash([]);
+  ctx.globalAlpha = 0.36;
+  ctx.fillStyle = player === BLACK ? "#111827" : "#ffffff";
+  ctx.beginPath();
+  ctx.arc(x, y, cell * 0.35, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
 }
 
 function drawLastMoveMarker(cell, padding, accentColor) {
@@ -966,6 +1105,7 @@ async function createOnlineRoom() {
       },
       moveHistory: [],
       lastMove: null,
+      undoRequest: null,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
     });
@@ -1038,6 +1178,8 @@ function applyOnlineRoom(data) {
   state.currentPlayer = data.currentPlayer || BLACK;
   state.history = Array.isArray(data.moveHistory) ? data.moveHistory : [];
   state.lastMove = data.lastMove || null;
+  state.undoRequest = data.undoRequest || null;
+  if (state.pendingMove && !canPlaceAt(state.pendingMove.row, state.pendingMove.col)) clearPendingMove(false);
   state.gameOver = data.status === "ended";
   state.winner = data.winner || EMPTY;
   state.winLine = state.winner && state.lastMove
@@ -1050,6 +1192,7 @@ function applyOnlineRoom(data) {
   els.roomInfo.textContent = `房號 ${data.roomCode || online.roomCode}`;
   els.playerInfo.textContent = `黑：${blackName}｜白：${whiteName}｜你是：${online.localColor ? playerName(online.localColor) : "觀戰"}`;
   updateConnectionInfo(players);
+  updateUndoRequestUi(state.undoRequest);
   if (online.localColor) startPresenceHeartbeat();
 
   if (state.gameOver) {
@@ -1093,6 +1236,7 @@ async function playOnlineMove(row, col) {
         winner,
         moveHistory: history,
         lastMove: move,
+        undoRequest: null,
         updatedAt: serverTimestamp()
       });
     });
@@ -1118,6 +1262,7 @@ async function resetOnlineRoom() {
       winner: EMPTY,
       moveHistory: [],
       lastMove: null,
+      undoRequest: null,
       updatedAt: serverTimestamp()
     });
     playSound("start");
@@ -1126,22 +1271,99 @@ async function resetOnlineRoom() {
   }
 }
 
-async function undoOnlineMove() {
+async function requestOnlineUndo() {
   if (!online.roomRef || !online.localColor || online.busy) return;
+
+  if (state.undoRequest?.fromUid === online.uid) {
+    await cancelOwnUndoRequest();
+    return;
+  }
+
   try {
     online.busy = true;
     await runTransaction(online.db, async transaction => {
       const snap = await transaction.get(online.roomRef);
       if (!snap.exists()) throw new Error("房間不存在。");
       const data = snap.data();
+      const history = Array.isArray(data.moveHistory) ? data.moveHistory : [];
+      const last = history[history.length - 1];
+      if (!last) throw new Error("目前沒有可以悔棋的步數。");
+      if (last.uid !== online.uid) throw new Error("目前只能請求撤回自己剛下、且對手尚未回應的最後一手。");
+      if (data.undoRequest) throw new Error("已有悔棋請求等待回覆。 ");
+
+      const playerKey = online.localColor === BLACK ? "black" : "white";
+      const playerNameText = data.players?.[playerKey]?.name || playerName(online.localColor);
+      transaction.update(online.roomRef, {
+        undoRequest: {
+          fromUid: online.uid,
+          fromColor: online.localColor,
+          fromName: playerNameText,
+          moveIndex: history.length,
+          row: last.row,
+          col: last.col,
+          createdAtMs: Date.now()
+        },
+        updatedAt: serverTimestamp()
+      });
+    });
+    playSound("ui");
+  } catch (error) {
+    showError(error);
+  } finally {
+    online.busy = false;
+  }
+}
+
+async function cancelOwnUndoRequest() {
+  if (!online.roomRef || !state.undoRequest || state.undoRequest.fromUid !== online.uid) return;
+  try {
+    await updateDoc(online.roomRef, {
+      undoRequest: null,
+      updatedAt: serverTimestamp()
+    });
+    playSound("ui");
+  } catch (error) {
+    showError(error);
+  }
+}
+
+async function respondUndoRequest(accepted) {
+  if (!online.roomRef || !online.localColor || online.busy || !state.undoRequest) return;
+
+  if (state.undoRequest.fromUid === online.uid) {
+    await cancelOwnUndoRequest();
+    return;
+  }
+
+  try {
+    online.busy = true;
+    await runTransaction(online.db, async transaction => {
+      const snap = await transaction.get(online.roomRef);
+      if (!snap.exists()) throw new Error("房間不存在。");
+      const data = snap.data();
+      const request = data.undoRequest;
+      if (!request) return;
+      if (request.fromUid === online.uid) throw new Error("不能同意自己的悔棋請求。 ");
+
+      if (!accepted) {
+        transaction.update(online.roomRef, {
+          undoRequest: null,
+          updatedAt: serverTimestamp()
+        });
+        return;
+      }
+
       const history = Array.isArray(data.moveHistory) ? [...data.moveHistory] : [];
       const last = history[history.length - 1];
-      if (!last) return;
-      if (last.uid !== online.uid) throw new Error("線上模式只能撤回自己剛下、且對手尚未回應的那一手。");
+      if (!last || history.length !== request.moveIndex || last.uid !== request.fromUid) {
+        throw new Error("這個悔棋請求已經過期，請重新送出。 ");
+      }
+
       history.pop();
       const flat = [...data.board];
       flat[last.row * BOARD_SIZE + last.col] = EMPTY;
       const previous = history[history.length - 1] || null;
+
       transaction.update(online.roomRef, {
         board: flat,
         currentPlayer: last.player,
@@ -1149,14 +1371,38 @@ async function undoOnlineMove() {
         winner: EMPTY,
         moveHistory: history,
         lastMove: previous,
+        undoRequest: null,
         updatedAt: serverTimestamp()
       });
     });
-    playSound("undo");
+    playSound(accepted ? "undo" : "ui");
   } catch (error) {
     showError(error);
   } finally {
     online.busy = false;
+  }
+}
+
+function updateUndoRequestUi(request = state.undoRequest) {
+  if (!els.undoRequestCard) return;
+  const hasRequest = Boolean(request && online.roomRef);
+  els.undoRequestCard.classList.toggle("hidden", !hasRequest);
+  if (!hasRequest) return;
+
+  const fromSelf = request.fromUid === online.uid;
+  const colorName = playerName(request.fromColor);
+  const position = typeof request.row === "number" && typeof request.col === "number"
+    ? `（第 ${request.row + 1} 列、第 ${request.col + 1} 行）`
+    : "";
+
+  els.undoRequestText.textContent = fromSelf
+    ? `你已送出悔棋請求，等待對手同意。${position}`
+    : `${request.fromName || colorName} 請求撤回上一手 ${position}`;
+
+  if (els.acceptUndoBtn) els.acceptUndoBtn.classList.toggle("hidden", fromSelf);
+  if (els.rejectUndoBtn) {
+    els.rejectUndoBtn.textContent = fromSelf ? "取消請求" : "拒絕";
+    els.rejectUndoBtn.classList.remove("hidden");
   }
 }
 
@@ -1304,6 +1550,13 @@ function updateInviteUi() {
   els.copyRoomBtn.classList.toggle("hidden", !hasRoom);
   if (els.inviteLinkWrap) els.inviteLinkWrap.classList.toggle("hidden", !hasRoom);
   if (els.inviteLinkInput) els.inviteLinkInput.value = hasRoom ? getInviteLink() : "";
+  if (els.qrCard) els.qrCard.classList.toggle("hidden", !hasRoom);
+  if (els.qrImage) {
+    const link = hasRoom ? getInviteLink() : "";
+    els.qrImage.src = link
+      ? `https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=12&data=${encodeURIComponent(link)}`
+      : "";
+  }
 }
 
 function getNickname() {

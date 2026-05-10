@@ -446,3 +446,60 @@ code {
 @media (display-mode: standalone) {
   #installBtn { display: none !important; }
 }
+
+.wide-switch {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+#confirmMoveBtn,
+#cancelPreviewBtn {
+  animation: pulse-soft 1.6s ease-in-out infinite;
+}
+
+@keyframes pulse-soft {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-1px); }
+}
+
+.undo-request-card,
+.qr-card {
+  margin-top: 12px;
+  padding: 13px;
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--panel-solid) 72%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.undo-request-card strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.undo-request-card p {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.qr-card {
+  display: grid;
+  gap: 10px;
+  place-items: center;
+  text-align: center;
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 0.86rem;
+}
+
+.qr-card img {
+  width: min(210px, 100%);
+  aspect-ratio: 1 / 1;
+  padding: 10px;
+  border-radius: 18px;
+  background: white;
+  box-shadow: 0 12px 26px rgba(0, 0, 0, 0.09);
+}
