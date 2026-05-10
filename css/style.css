@@ -412,3 +412,37 @@ code {
   .action-row button { width: auto; flex: 1; }
   canvas { border-radius: 18px; }
 }
+
+.presence-card {
+  margin-top: 12px;
+  padding: 11px 13px;
+  border-radius: 16px;
+  font-size: 0.88rem;
+  font-weight: 800;
+  line-height: 1.45;
+  background: color-mix(in srgb, var(--panel-solid) 70%, transparent);
+  border: 1px solid color-mix(in srgb, var(--muted) 16%, transparent);
+  color: var(--muted);
+}
+
+.presence-card[data-state="online"] {
+  color: #166534;
+  background: color-mix(in srgb, #bbf7d0 44%, var(--panel-solid));
+  border-color: color-mix(in srgb, #22c55e 38%, transparent);
+}
+
+.presence-card[data-state="waiting"] {
+  color: #075985;
+  background: color-mix(in srgb, #bae6fd 42%, var(--panel-solid));
+  border-color: color-mix(in srgb, #38bdf8 36%, transparent);
+}
+
+.presence-card[data-state="offline"] {
+  color: #9f1239;
+  background: color-mix(in srgb, #ffe4e6 50%, var(--panel-solid));
+  border-color: color-mix(in srgb, #fb7185 38%, transparent);
+}
+
+@media (display-mode: standalone) {
+  #installBtn { display: none !important; }
+}

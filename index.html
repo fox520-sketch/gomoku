@@ -4,7 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#0ea5b7" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="海洋五子棋" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <title>海洋五子棋 Gomoku</title>
+    <link rel="manifest" href="./manifest.json" />
+    <link rel="icon" href="./icons/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./icons/icon-192.png" />
     <link rel="stylesheet" href="./css/style.css" />
   </head>
   <body>
@@ -48,6 +54,7 @@
             <button id="newGameBtn" class="primary">重新開始</button>
             <button id="undoBtn">悔棋</button>
             <button id="copyRoomBtn" class="ghost hidden">複製邀請連結</button>
+            <button id="installBtn" class="ghost hidden">安裝到手機</button>
           </div>
         </section>
 
@@ -128,6 +135,7 @@
               <strong id="roomInfo">尚未連線</strong>
               <span id="playerInfo" class="muted">你尚未加入房間</span>
             </div>
+            <div id="connectionInfo" class="presence-card" data-state="idle">尚未連線到線上房間</div>
             <label id="inviteLinkWrap" class="invite-link-wrap hidden">
               邀請連結
               <input id="inviteLinkInput" type="text" readonly aria-label="可分享給朋友的房間邀請連結" />
@@ -141,6 +149,8 @@
               <li>手機上直接點棋盤交叉點即可落子。</li>
               <li>線上模式會同步棋盤、回合、勝負與悔棋狀態。</li>
               <li>建立房間後可複製邀請連結，朋友開啟後會自動帶入房號。</li>
+              <li>獲勝時會顯示連線動畫，最後一步會以亮點標記。</li>
+              <li>支援 PWA，手機瀏覽器可以加入主畫面。</li>
             </ul>
           </section>
         </aside>

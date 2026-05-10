@@ -64,13 +64,23 @@ service cloud.firestore {
 
   function validPlayer(player) {
     return player is map
-      && player.keys().hasOnly(['uid', 'name'])
+      && player.keys().hasOnly(['uid', 'name', 'online', 'lastSeen'])
       && player.uid is string
       && player.uid.size() > 0
       && player.uid.size() <= 128
       && player.name is string
       && player.name.size() > 0
-      && player.name.size() <= 18;
+      && player.name.size() <= 18
+      && (!player.keys().hasAny(['online']) || player.online is bool)
+      && (!player.keys().hasAny(['lastSeen']) || player.lastSeen is timestamp);
+  }
+
+  function samePlayerIdentity(newPlayer, oldPlayer) {
+    return (newPlayer == null && oldPlayer == null)
+      || (newPlayer != null
+        && oldPlayer != null
+        && newPlayer.uid == oldPlayer.uid
+        && newPlayer.name == oldPlayer.name);
   }
 
   function isBlack(data) {
@@ -102,7 +112,7 @@ service cloud.firestore {
 
   function validPlayerUpdate() {
     return isPlayer(resource.data)
-      && request.resource.data.players.black == resource.data.players.black
-      && request.resource.data.players.white == resource.data.players.white;
+      && samePlayerIdentity(request.resource.data.players.black, resource.data.players.black)
+      && samePlayerIdentity(request.resource.data.players.white, resource.data.players.white);
   }
 }

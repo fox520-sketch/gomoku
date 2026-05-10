@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="80" y1="40" x2="440" y2="460" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#e9fbff"/>
+      <stop offset="1" stop-color="#0ea5b7"/>
+    </linearGradient>
+    <radialGradient id="stone" cx="35%" cy="28%" r="65%">
+      <stop stop-color="#6b7280"/>
+      <stop offset="0.55" stop-color="#1f2937"/>
+      <stop offset="1" stop-color="#020617"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <path d="M66 342c70-38 137 35 207-3s120-44 173-7" fill="none" stroke="#ffffff" stroke-opacity="0.45" stroke-width="24" stroke-linecap="round"/>
+  <rect x="116" y="116" width="280" height="280" rx="28" fill="#d9b36a" opacity="0.96"/>
+  <g stroke="#4a3824" stroke-width="7" stroke-linecap="round" opacity="0.85">
+    <path d="M172 138v236M228 138v236M284 138v236M340 138v236"/>
+    <path d="M138 172h236M138 228h236M138 284h236M138 340h236"/>
+  </g>
+  <circle cx="172" cy="284" r="27" fill="url(#stone)"/>
+  <circle cx="228" cy="284" r="27" fill="url(#stone)"/>
+  <circle cx="284" cy="284" r="27" fill="url(#stone)"/>
+  <circle cx="340" cy="284" r="27" fill="url(#stone)"/>
+  <circle cx="284" cy="228" r="27" fill="#f8fafc" stroke="#cbd5e1" stroke-width="5"/>
+  <path d="M154 284h204" stroke="#22d3ee" stroke-width="14" stroke-linecap="round"/>
+</svg>

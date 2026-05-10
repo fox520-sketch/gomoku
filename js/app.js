@@ -48,6 +48,8 @@ const els = {
   inviteLinkInput: document.getElementById("inviteLinkInput"),
   roomInfo: document.getElementById("roomInfo"),
   playerInfo: document.getElementById("playerInfo"),
+  connectionInfo: document.getElementById("connectionInfo"),
+  installBtn: document.getElementById("installBtn"),
   newGameBtn: document.getElementById("newGameBtn"),
   undoBtn: document.getElementById("undoBtn")
 };
@@ -62,6 +64,9 @@ let state = {
   mode: "ai",
   gameOver: false,
   winner: EMPTY,
+  winLine: null,
+  winAnimationFrame: null,
+  winAnimationStart: 0,
   aiDifficulty: 10,
   timerLimit: 0,
   remaining: { [BLACK]: 0, [WHITE]: 0 },
@@ -81,17 +86,21 @@ let online = {
   localColor: null,
   players: null,
   ready: false,
-  busy: false
+  busy: false,
+  heartbeatHandle: null,
+  presenceVisibilityHandler: null
 };
 
 let timerHandle = null;
 let audioContext = null;
+let deferredInstallPrompt = null;
 
 init();
 
 function init() {
   hydratePreferences();
   bindEvents();
+  setupPwa();
   const invitedRoomCode = applyInviteFromUrl();
   resizeCanvasForDisplay();
   startNewGame({ silent: true });
@@ -151,7 +160,10 @@ function bindEvents() {
     state.mode = els.modeSelect.value;
     localStorage.setItem(`${STORAGE_PREFIX}:mode`, state.mode);
     togglePanels();
-    if (state.mode !== "online") clearInviteFromUrl();
+    if (state.mode !== "online") {
+      stopPresenceHeartbeat();
+      clearInviteFromUrl();
+    }
     startNewGame();
   });
 
@@ -196,6 +208,45 @@ function bindEvents() {
   if (els.inviteLinkInput) {
     els.inviteLinkInput.addEventListener("click", () => els.inviteLinkInput.select());
   }
+
+  if (els.installBtn) {
+    els.installBtn.addEventListener("click", installPwa);
+  }
+}
+
+function setupPwa() {
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("./service-worker.js").catch(error => {
+        console.warn("Gomoku service worker registration failed:", error);
+      });
+    });
+  }
+
+  window.addEventListener("beforeinstallprompt", event => {
+    event.preventDefault();
+    deferredInstallPrompt = event;
+    if (els.installBtn) els.installBtn.classList.remove("hidden");
+  });
+
+  window.addEventListener("appinstalled", () => {
+    deferredInstallPrompt = null;
+    if (els.installBtn) els.installBtn.classList.add("hidden");
+    updateStatus("已安裝到裝置，可以從主畫面開啟。 ");
+  });
+}
+
+async function installPwa() {
+  if (!deferredInstallPrompt) {
+    updateStatus("如果瀏覽器支援安裝，請使用分享選單或瀏覽器選單加入主畫面。 ");
+    return;
+  }
+
+  deferredInstallPrompt.prompt();
+  const choice = await deferredInstallPrompt.userChoice.catch(() => null);
+  if (choice?.outcome === "accepted") playSound("ui");
+  deferredInstallPrompt = null;
+  if (els.installBtn) els.installBtn.classList.add("hidden");
 }
 
 function togglePanels() {
@@ -230,6 +281,8 @@ function startNewGame(options = {}) {
   state.lastMove = null;
   state.gameOver = false;
   state.winner = EMPTY;
+  state.winLine = null;
+  stopWinAnimation();
   state.aiThinking = false;
   resetTimers();
   hideOverlay();
@@ -338,6 +391,7 @@ function playLocalMove(row, col) {
 
 function placeMove(row, col, player, options = {}) {
   state.board[row][col] = player;
+  state.winLine = null;
   state.lastMove = { row, col, player };
   state.history.push({ row, col, player, at: Date.now() });
   if (options.sound) playSound("move");
@@ -346,6 +400,7 @@ function placeMove(row, col, player, options = {}) {
 
 function finishTurnIfNeeded(row, col, player) {
   if (checkWin(state.board, row, col, player)) {
+    state.winLine = getWinningLine(state.board, row, col, player);
     endGame(player, `${playerName(player)}獲勝！`);
     return true;
   }
@@ -388,6 +443,8 @@ function undoLocalMove() {
   hideOverlay();
   state.gameOver = false;
   state.winner = EMPTY;
+  state.winLine = null;
+  stopWinAnimation();
 
   const steps = state.mode === "ai" ? Math.min(2, state.history.length) : 1;
   for (let i = 0; i < steps; i++) {
@@ -412,6 +469,7 @@ function endGame(winner, message) {
   updateStatus(message);
   showOverlay(winner === EMPTY ? "平手" : `${playerName(winner)}獲勝`, message);
   drawBoard();
+  if (winner !== EMPTY && state.winLine) startWinAnimation();
   playSound(winner === EMPTY ? "draw" : "win");
 }
 
@@ -461,6 +519,14 @@ function updateOnlineStatusText() {
       : "等待白棋加入";
     return;
   }
+
+  const opponentKey = online.localColor === BLACK ? "white" : "black";
+  const opponent = online.players?.[opponentKey];
+  if (opponent && opponent.online === false) {
+    els.statusText.textContent = "對手可能已離線，等待重新連線";
+    return;
+  }
+
   els.statusText.textContent = state.currentPlayer === online.localColor ? "輪到你下棋" : "等待對手下棋";
 }
 
@@ -485,6 +551,32 @@ function checkWin(board, row, col, player) {
     if (total >= 5) return true;
   }
   return false;
+}
+
+function getWinningLine(board, row, col, player) {
+  const dirs = [[0, 1], [1, 0], [1, 1], [1, -1]];
+  for (const [dr, dc] of dirs) {
+    const line = [{ row, col }];
+
+    let r = row - dr;
+    let c = col - dc;
+    while (isInside(r, c) && board[r][c] === player) {
+      line.unshift({ row: r, col: c });
+      r -= dr;
+      c -= dc;
+    }
+
+    r = row + dr;
+    c = col + dc;
+    while (isInside(r, c) && board[r][c] === player) {
+      line.push({ row: r, col: c });
+      r += dr;
+      c += dc;
+    }
+
+    if (line.length >= 5) return line;
+  }
+  return null;
 }
 
 function countDirection(board, row, col, dr, dc, player) {
@@ -541,6 +633,7 @@ function drawBoard() {
 
   drawStarPoints(cell, padding, lineColor);
   drawStones(cell, padding, accentColor);
+  drawWinLine(cell, padding, accentColor);
 }
 
 function drawWaterTexture(accentColor) {
@@ -580,17 +673,87 @@ function drawStones(cell, padding, accentColor) {
     }
   }
 
-  if (state.lastMove) {
-    const x = padding + state.lastMove.col * cell;
-    const y = padding + state.lastMove.row * cell;
-    ctx.save();
-    ctx.strokeStyle = accentColor;
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.arc(x, y, cell * 0.18, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.restore();
-  }
+  if (state.lastMove) drawLastMoveMarker(cell, padding, accentColor);
+}
+
+function drawLastMoveMarker(cell, padding, accentColor) {
+  const x = padding + state.lastMove.col * cell;
+  const y = padding + state.lastMove.row * cell;
+  const isWhiteStone = state.lastMove.player === WHITE;
+
+  ctx.save();
+  ctx.strokeStyle = accentColor;
+  ctx.lineWidth = 3.4;
+  ctx.shadowColor = accentColor;
+  ctx.shadowBlur = 10;
+  ctx.beginPath();
+  ctx.arc(x, y, cell * 0.27, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = isWhiteStone ? "rgba(20, 35, 40, 0.8)" : "rgba(255, 255, 255, 0.9)";
+  ctx.beginPath();
+  ctx.arc(x, y, cell * 0.075, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawWinLine(cell, padding, accentColor) {
+  if (!state.winLine || state.winLine.length < 5) return;
+
+  const first = state.winLine[0];
+  const last = state.winLine[state.winLine.length - 1];
+  const startX = padding + first.col * cell;
+  const startY = padding + first.row * cell;
+  const endX = padding + last.col * cell;
+  const endY = padding + last.row * cell;
+  const progress = state.winAnimationStart
+    ? clamp((performance.now() - state.winAnimationStart) / 760, 0, 1)
+    : 1;
+  const currentX = startX + (endX - startX) * progress;
+  const currentY = startY + (endY - startY) * progress;
+
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.strokeStyle = accentColor;
+  ctx.shadowColor = accentColor;
+  ctx.shadowBlur = 18;
+  ctx.lineWidth = cell * 0.18;
+  ctx.beginPath();
+  ctx.moveTo(startX, startY);
+  ctx.lineTo(currentX, currentY);
+  ctx.stroke();
+
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = "rgba(255,255,255,0.88)";
+  ctx.lineWidth = cell * 0.065;
+  ctx.beginPath();
+  ctx.moveTo(startX, startY);
+  ctx.lineTo(currentX, currentY);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function startWinAnimation() {
+  stopWinAnimation();
+  state.winAnimationStart = performance.now();
+  const animate = () => {
+    drawBoard();
+    if (performance.now() - state.winAnimationStart < 900 && state.winLine) {
+      state.winAnimationFrame = requestAnimationFrame(animate);
+    } else {
+      state.winAnimationStart = 0;
+      state.winAnimationFrame = null;
+      drawBoard();
+    }
+  };
+  state.winAnimationFrame = requestAnimationFrame(animate);
+}
+
+function stopWinAnimation() {
+  if (state.winAnimationFrame) cancelAnimationFrame(state.winAnimationFrame);
+  state.winAnimationFrame = null;
+  state.winAnimationStart = 0;
 }
 
 function drawStone(row, col, player, cell, padding) {
@@ -798,7 +961,7 @@ async function createOnlineRoom() {
       status: "playing",
       winner: EMPTY,
       players: {
-        black: { uid: online.uid, name: nickname },
+        black: { uid: online.uid, name: nickname, online: true, lastSeen: serverTimestamp() },
         white: null
       },
       moveHistory: [],
@@ -832,7 +995,7 @@ async function joinOnlineRoom() {
       if (players.black?.uid === online.uid || players.white?.uid === online.uid) return;
       if (!players.white) {
         transaction.update(roomRef, {
-          "players.white": { uid: online.uid, name: nickname },
+          "players.white": { uid: online.uid, name: nickname, online: true, lastSeen: serverTimestamp() },
           updatedAt: serverTimestamp()
         });
         return;
@@ -877,16 +1040,22 @@ function applyOnlineRoom(data) {
   state.lastMove = data.lastMove || null;
   state.gameOver = data.status === "ended";
   state.winner = data.winner || EMPTY;
+  state.winLine = state.winner && state.lastMove
+    ? getWinningLine(state.board, state.lastMove.row, state.lastMove.col, state.winner)
+    : null;
 
   online.players = players;
   const blackName = players.black?.name || "等待中";
   const whiteName = players.white?.name || "等待中";
   els.roomInfo.textContent = `房號 ${data.roomCode || online.roomCode}`;
   els.playerInfo.textContent = `黑：${blackName}｜白：${whiteName}｜你是：${online.localColor ? playerName(online.localColor) : "觀戰"}`;
+  updateConnectionInfo(players);
+  if (online.localColor) startPresenceHeartbeat();
 
   if (state.gameOver) {
     clearInterval(timerHandle);
     showOverlay(state.winner ? `${playerName(state.winner)}獲勝` : "平手", state.winner ? `${playerName(state.winner)}獲勝！` : "平手！");
+    if (state.winner && state.winLine) startWinAnimation();
   } else {
     hideOverlay();
     startTurnTimer();
@@ -991,6 +1160,84 @@ async function undoOnlineMove() {
   }
 }
 
+function updateConnectionInfo(players = online.players) {
+  if (!els.connectionInfo || state.mode !== "online") return;
+  if (!online.roomRef) {
+    els.connectionInfo.textContent = "尚未連線到線上房間";
+    els.connectionInfo.dataset.state = "idle";
+    return;
+  }
+
+  const selfKey = online.localColor === BLACK ? "black" : online.localColor === WHITE ? "white" : null;
+  const opponentKey = selfKey === "black" ? "white" : selfKey === "white" ? "black" : null;
+  const opponent = opponentKey ? players?.[opponentKey] : null;
+
+  if (!opponent) {
+    els.connectionInfo.textContent = online.localColor === BLACK
+      ? "等待白棋加入。你可以先下第一手，也可以複製邀請連結給朋友。"
+      : "正在讀取對手狀態...";
+    els.connectionInfo.dataset.state = "waiting";
+    return;
+  }
+
+  const onlineNow = opponent.online !== false && isRecentlySeen(opponent.lastSeen);
+  els.connectionInfo.textContent = onlineNow
+    ? `對手 ${opponent.name || playerName(otherPlayer(online.localColor))} 在線上`
+    : `對手 ${opponent.name || playerName(otherPlayer(online.localColor))} 可能已離線，等待重新連線...`;
+  els.connectionInfo.dataset.state = onlineNow ? "online" : "offline";
+}
+
+function isRecentlySeen(lastSeen) {
+  const millis = toMillis(lastSeen);
+  if (!millis) return true;
+  return Date.now() - millis < 45000;
+}
+
+function toMillis(timestamp) {
+  if (!timestamp) return 0;
+  if (typeof timestamp.toMillis === "function") return timestamp.toMillis();
+  if (typeof timestamp.seconds === "number") return timestamp.seconds * 1000;
+  if (timestamp instanceof Date) return timestamp.getTime();
+  return 0;
+}
+
+function startPresenceHeartbeat() {
+  if (online.heartbeatHandle || !online.roomRef || !online.localColor) return;
+  setOwnPresence(true);
+  online.heartbeatHandle = window.setInterval(() => {
+    setOwnPresence(document.visibilityState !== "hidden");
+    updateConnectionInfo();
+  }, 15000);
+
+  online.presenceVisibilityHandler = () => {
+    setOwnPresence(document.visibilityState !== "hidden");
+    updateConnectionInfo();
+  };
+  document.addEventListener("visibilitychange", online.presenceVisibilityHandler);
+  window.addEventListener("pagehide", () => setOwnPresence(false), { once: true });
+}
+
+function stopPresenceHeartbeat() {
+  if (online.heartbeatHandle) clearInterval(online.heartbeatHandle);
+  online.heartbeatHandle = null;
+  if (online.presenceVisibilityHandler) {
+    document.removeEventListener("visibilitychange", online.presenceVisibilityHandler);
+  }
+  online.presenceVisibilityHandler = null;
+}
+
+function setOwnPresence(isOnline) {
+  if (!online.roomRef || !online.localColor || !updateDoc) return;
+  const key = online.localColor === BLACK ? "black" : "white";
+  updateDoc(online.roomRef, {
+    [`players.${key}.online`]: Boolean(isOnline),
+    [`players.${key}.lastSeen`]: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  }).catch(error => {
+    console.warn("Gomoku presence update failed:", error);
+  });
+}
+
 function flattenBoard(board) {
   return board.flat();
 }
@@ -1092,7 +1339,7 @@ function showError(error) {
   const raw = error?.message || String(error);
   const code = error?.code || "";
   const message = code === "permission-denied" || raw.includes("Missing or insufficient permissions")
-    ? "Firebase 權限不足：目前寫入被 Firestore Rules 擋下。請確認已發布 v8 規則，並用新版網址建立新房間測試。"
+    ? "Firebase 權限不足：目前寫入被 Firestore Rules 擋下。請確認已發布最新版規則，並用新版網址建立新房間測試。"
     : raw;
   els.statusText.textContent = code ? `${message} (${code})` : message;
   console.error("Gomoku Firebase error:", error);
