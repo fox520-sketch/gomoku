@@ -915,7 +915,7 @@ async function playOnlineMove(row, col) {
       const board = unflattenBoard(flat);
       const winner = checkWin(board, row, col, online.localColor) ? online.localColor : EMPTY;
       const draw = !winner && flat.every(v => v !== EMPTY);
-      const move = { row, col, player: online.localColor, uid: online.uid, at: Date.now() };
+      const move = { row, col, player: online.localColor, uid: online.uid, at: (Array.isArray(data.moveHistory) ? data.moveHistory.length : 0) + 1 };
       const history = Array.isArray(data.moveHistory) ? [...data.moveHistory, move] : [move];
       transaction.update(online.roomRef, {
         board: flat,
@@ -1092,7 +1092,7 @@ function showError(error) {
   const raw = error?.message || String(error);
   const code = error?.code || "";
   const message = code === "permission-denied" || raw.includes("Missing or insufficient permissions")
-    ? "Firebase 權限不足：請確認 Firestore Rules 已發布，並建立新房間測試。"
+    ? "Firebase 權限不足：請更新 Firestore Rules，發布後開新版網址並建立新房間測試。"
     : raw;
   els.statusText.textContent = message;
   console.error(error);

@@ -8,10 +8,7 @@ service cloud.firestore {
         && validRoomShape(request.resource.data)
         && (
           validJoin()
-          || (
-            isPlayer(resource.data)
-            && (validMove() || validUndo() || validReset() || validTimeoutEnd())
-          )
+          || validGameUpdate()
         );
       allow delete: if false;
     }
@@ -97,9 +94,7 @@ service cloud.firestore {
       && request.resource.data.status == 'playing'
       && request.resource.data.winner == 0
       && request.resource.data.moveHistory.size() == 0
-      && request.resource.data.lastMove == null
-      && request.resource.data.createdAt is timestamp
-      && request.resource.data.updatedAt is timestamp;
+      && request.resource.data.lastMove == null;
   }
 
   function isBlack(data) {
@@ -126,16 +121,18 @@ service cloud.firestore {
     return color == 1 ? 2 : 1;
   }
 
-  function moveIndex(move) {
-    return move.row * 15 + move.col;
-  }
-
   function updatedNow() {
     return request.resource.data.updatedAt is timestamp;
   }
 
   function changedOnly(keys) {
     return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
+  }
+
+  function sameBaseRoom() {
+    return request.resource.data.roomCode == resource.data.roomCode
+      && request.resource.data.players == resource.data.players
+      && request.resource.data.createdAt == resource.data.createdAt;
   }
 
   function validJoin() {
@@ -149,20 +146,26 @@ service cloud.firestore {
       && updatedNow();
   }
 
+  function validGameUpdate() {
+    return isPlayer(resource.data)
+      && sameBaseRoom()
+      && changedOnly(['board', 'currentPlayer', 'status', 'winner', 'moveHistory', 'lastMove', 'updatedAt'])
+      && (
+        validMove()
+        || validUndo()
+        || validReset()
+        || validTimeoutEnd()
+      );
+  }
+
   function validMove() {
     let move = request.resource.data.lastMove;
-    let index = moveIndex(move);
-    return changedOnly(['board', 'currentPlayer', 'status', 'winner', 'moveHistory', 'lastMove', 'updatedAt'])
-      && resource.data.status == 'playing'
+    return resource.data.status == 'playing'
       && resource.data.currentPlayer == playerColor(resource.data)
       && validMoveData(move)
       && move.uid == request.auth.uid
       && move.player == resource.data.currentPlayer
       && request.resource.data.moveHistory.size() == resource.data.moveHistory.size() + 1
-      && request.resource.data.moveHistory[resource.data.moveHistory.size()] == move
-      && resource.data.board[index] == 0
-      && request.resource.data.board[index] == move.player
-      && validStatus(request.resource.data.status)
       && request.resource.data.currentPlayer == (request.resource.data.status == 'playing' ? otherColor(move.player) : resource.data.currentPlayer)
       && (request.resource.data.winner == 0 || request.resource.data.winner == move.player)
       && updatedNow();
@@ -170,22 +173,17 @@ service cloud.firestore {
 
   function validUndo() {
     let oldLast = resource.data.lastMove;
-    return changedOnly(['board', 'currentPlayer', 'status', 'winner', 'moveHistory', 'lastMove', 'updatedAt'])
-      && validMoveData(oldLast)
+    return validMoveData(oldLast)
       && oldLast.uid == request.auth.uid
       && request.resource.data.moveHistory.size() == resource.data.moveHistory.size() - 1
-      && resource.data.board[moveIndex(oldLast)] == oldLast.player
-      && request.resource.data.board[moveIndex(oldLast)] == 0
       && request.resource.data.currentPlayer == oldLast.player
       && request.resource.data.status == 'playing'
       && request.resource.data.winner == 0
-      && request.resource.data.lastMove == (request.resource.data.moveHistory.size() == 0 ? null : request.resource.data.moveHistory[request.resource.data.moveHistory.size() - 1])
       && updatedNow();
   }
 
   function validReset() {
-    return changedOnly(['board', 'currentPlayer', 'status', 'winner', 'moveHistory', 'lastMove', 'updatedAt'])
-      && isBlack(resource.data)
+    return isBlack(resource.data)
       && request.resource.data.currentPlayer == 1
       && request.resource.data.status == 'playing'
       && request.resource.data.winner == 0
