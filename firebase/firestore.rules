@@ -98,8 +98,8 @@ service cloud.firestore {
       && request.resource.data.winner == 0
       && request.resource.data.moveHistory.size() == 0
       && request.resource.data.lastMove == null
-      && request.resource.data.createdAt == request.time
-      && request.resource.data.updatedAt == request.time;
+      && request.resource.data.createdAt is timestamp
+      && request.resource.data.updatedAt is timestamp;
   }
 
   function isBlack(data) {
@@ -131,7 +131,7 @@ service cloud.firestore {
   }
 
   function updatedNow() {
-    return request.resource.data.updatedAt == request.time;
+    return request.resource.data.updatedAt is timestamp;
   }
 
   function changedOnly(keys) {
@@ -154,7 +154,6 @@ service cloud.firestore {
     let index = moveIndex(move);
     return changedOnly(['board', 'currentPlayer', 'status', 'winner', 'moveHistory', 'lastMove', 'updatedAt'])
       && resource.data.status == 'playing'
-      && resource.data.players.white != null
       && resource.data.currentPlayer == playerColor(resource.data)
       && validMoveData(move)
       && move.uid == request.auth.uid

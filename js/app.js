@@ -79,6 +79,7 @@ let online = {
   unsubscribe: null,
   roomCode: "",
   localColor: null,
+  players: null,
   ready: false,
   busy: false
 };
@@ -452,6 +453,12 @@ function updateOnlineStatusText() {
   }
   if (state.gameOver) {
     els.statusText.textContent = state.winner ? `${playerName(state.winner)}獲勝！` : "平手！";
+    return;
+  }
+  if (online.localColor === BLACK && !online.players?.white) {
+    els.statusText.textContent = state.currentPlayer === BLACK
+      ? "等待白棋加入；黑棋也可以先下第一手"
+      : "等待白棋加入";
     return;
   }
   els.statusText.textContent = state.currentPlayer === online.localColor ? "輪到你下棋" : "等待對手下棋";
@@ -871,6 +878,7 @@ function applyOnlineRoom(data) {
   state.gameOver = data.status === "ended";
   state.winner = data.winner || EMPTY;
 
+  online.players = players;
   const blackName = players.black?.name || "等待中";
   const whiteName = players.white?.name || "等待中";
   els.roomInfo.textContent = `房號 ${data.roomCode || online.roomCode}`;
@@ -1081,7 +1089,11 @@ function setButtonsBusy(isBusy) {
 }
 
 function showError(error) {
-  const message = error?.message || String(error);
+  const raw = error?.message || String(error);
+  const code = error?.code || "";
+  const message = code === "permission-denied" || raw.includes("Missing or insufficient permissions")
+    ? "Firebase 權限不足：請確認 Firestore Rules 已發布，並建立新房間測試。"
+    : raw;
   els.statusText.textContent = message;
   console.error(error);
 }

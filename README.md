@@ -99,3 +99,23 @@ https://你的帳號.github.io/gomoku/?room=ABC123
 - 悔棋只能撤回自己剛下的最後一手
 - 只有黑棋房主可以重新開始房間
 - 不允許刪除房間文件
+
+
+## Hotfix v6：邀請連結與權限修正
+
+這版修正線上房間在嚴格 Firestore Rules 下可能出現 `Missing or insufficient permissions` 的情況。
+
+- 允許黑棋房主在白棋加入前先下第一手。
+- 狀態文字會明確提示「等待白棋加入」。
+- 權限錯誤會顯示更容易理解的訊息。
+- Firestore Rules 保持玩家身分、回合、棋盤長度、移動紀錄與房間欄位限制，但放寬時間戳比對，降低部署環境差異造成的誤擋。
+
+更新時請覆蓋：
+
+```text
+js/app.js
+firebase/firestore.rules
+README.md
+```
+
+不要覆蓋 `js/firebase-config.js`。
