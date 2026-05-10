@@ -3,12 +3,17 @@ service cloud.firestore {
   match /databases/{database}/documents {
     match /gomokuRooms/{roomId} {
       allow read: if signedIn();
-      allow create: if signedIn() && validCreate();
+      allow create: if signedIn()
+        && validRoom(request.resource.data)
+        && request.resource.data.players.black.uid == request.auth.uid
+        && request.resource.data.players.white == null;
       allow update: if signedIn()
-        && validRoomShape(request.resource.data)
+        && validRoom(request.resource.data)
+        && request.resource.data.roomCode == resource.data.roomCode
+        && request.resource.data.createdAt == resource.data.createdAt
         && (
           validJoin()
-          || validGameUpdate()
+          || validPlayerUpdate()
         );
       allow delete: if false;
     }
@@ -25,7 +30,7 @@ service cloud.firestore {
     ];
   }
 
-  function validRoomShape(data) {
+  function validRoom(data) {
     return data.keys().hasOnly(allowedRoomKeys())
       && data.roomCode is string
       && data.roomCode == roomId
@@ -42,9 +47,7 @@ service cloud.firestore {
       && (data.players.white == null || validPlayer(data.players.white))
       && data.moveHistory is list
       && data.moveHistory.size() <= 225
-      && (data.lastMove == null || validMoveData(data.lastMove))
-      && data.createdAt is timestamp
-      && data.updatedAt is timestamp;
+      && (data.lastMove == null || data.lastMove is map);
   }
 
   function validColor(color) {
@@ -70,33 +73,6 @@ service cloud.firestore {
       && player.name.size() <= 18;
   }
 
-  function validMoveData(move) {
-    return move is map
-      && move.keys().hasOnly(['row', 'col', 'player', 'uid', 'at'])
-      && move.row is int
-      && move.col is int
-      && move.row >= 0
-      && move.row < 15
-      && move.col >= 0
-      && move.col < 15
-      && validColor(move.player)
-      && move.uid is string
-      && move.uid.size() > 0
-      && move.uid.size() <= 128
-      && move.at is int;
-  }
-
-  function validCreate() {
-    return validRoomShape(request.resource.data)
-      && request.resource.data.players.black.uid == request.auth.uid
-      && request.resource.data.players.white == null
-      && request.resource.data.currentPlayer == 1
-      && request.resource.data.status == 'playing'
-      && request.resource.data.winner == 0
-      && request.resource.data.moveHistory.size() == 0
-      && request.resource.data.lastMove == null;
-  }
-
   function isBlack(data) {
     return data.players.black.uid == request.auth.uid;
   }
@@ -109,95 +85,24 @@ service cloud.firestore {
     return isBlack(data) || isWhite(data);
   }
 
-  function playerColor(data) {
-    return isBlack(data) ? 1 : (isWhite(data) ? 2 : 0);
-  }
-
-  function uidForColor(data, color) {
-    return color == 1 ? data.players.black.uid : (data.players.white == null ? '' : data.players.white.uid);
-  }
-
-  function otherColor(color) {
-    return color == 1 ? 2 : 1;
-  }
-
-  function updatedNow() {
-    return request.resource.data.updatedAt is timestamp;
-  }
-
-  function changedOnly(keys) {
-    return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
-  }
-
-  function sameBaseRoom() {
-    return request.resource.data.roomCode == resource.data.roomCode
-      && request.resource.data.players == resource.data.players
-      && request.resource.data.createdAt == resource.data.createdAt;
-  }
-
   function validJoin() {
-    return changedOnly(['players', 'updatedAt'])
-      && resource.data.status == 'playing'
+    return resource.data.status == 'playing'
       && resource.data.players.white == null
       && request.resource.data.players.black == resource.data.players.black
       && validPlayer(request.resource.data.players.white)
       && request.resource.data.players.white.uid == request.auth.uid
-      && request.resource.data.players.black.uid != request.auth.uid
-      && updatedNow();
+      && request.resource.data.players.white.uid != resource.data.players.black.uid
+      && request.resource.data.board == resource.data.board
+      && request.resource.data.currentPlayer == resource.data.currentPlayer
+      && request.resource.data.status == resource.data.status
+      && request.resource.data.winner == resource.data.winner
+      && request.resource.data.moveHistory == resource.data.moveHistory
+      && request.resource.data.lastMove == resource.data.lastMove;
   }
 
-  function validGameUpdate() {
+  function validPlayerUpdate() {
     return isPlayer(resource.data)
-      && sameBaseRoom()
-      && changedOnly(['board', 'currentPlayer', 'status', 'winner', 'moveHistory', 'lastMove', 'updatedAt'])
-      && (
-        validMove()
-        || validUndo()
-        || validReset()
-        || validTimeoutEnd()
-      );
-  }
-
-  function validMove() {
-    let move = request.resource.data.lastMove;
-    return resource.data.status == 'playing'
-      && resource.data.currentPlayer == playerColor(resource.data)
-      && validMoveData(move)
-      && move.uid == request.auth.uid
-      && move.player == resource.data.currentPlayer
-      && request.resource.data.moveHistory.size() == resource.data.moveHistory.size() + 1
-      && request.resource.data.currentPlayer == (request.resource.data.status == 'playing' ? otherColor(move.player) : resource.data.currentPlayer)
-      && (request.resource.data.winner == 0 || request.resource.data.winner == move.player)
-      && updatedNow();
-  }
-
-  function validUndo() {
-    let oldLast = resource.data.lastMove;
-    return validMoveData(oldLast)
-      && oldLast.uid == request.auth.uid
-      && request.resource.data.moveHistory.size() == resource.data.moveHistory.size() - 1
-      && request.resource.data.currentPlayer == oldLast.player
-      && request.resource.data.status == 'playing'
-      && request.resource.data.winner == 0
-      && updatedNow();
-  }
-
-  function validReset() {
-    return isBlack(resource.data)
-      && request.resource.data.currentPlayer == 1
-      && request.resource.data.status == 'playing'
-      && request.resource.data.winner == 0
-      && request.resource.data.moveHistory.size() == 0
-      && request.resource.data.lastMove == null
-      && updatedNow();
-  }
-
-  function validTimeoutEnd() {
-    return changedOnly(['status', 'winner', 'updatedAt'])
-      && resource.data.status == 'playing'
-      && uidForColor(resource.data, resource.data.currentPlayer) == request.auth.uid
-      && request.resource.data.status == 'ended'
-      && request.resource.data.winner == otherColor(resource.data.currentPlayer)
-      && updatedNow();
+      && request.resource.data.players.black == resource.data.players.black
+      && request.resource.data.players.white == resource.data.players.white;
   }
 }

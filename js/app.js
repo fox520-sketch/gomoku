@@ -1092,10 +1092,10 @@ function showError(error) {
   const raw = error?.message || String(error);
   const code = error?.code || "";
   const message = code === "permission-denied" || raw.includes("Missing or insufficient permissions")
-    ? "Firebase 權限不足：請更新 Firestore Rules，發布後開新版網址並建立新房間測試。"
+    ? "Firebase 權限不足：目前寫入被 Firestore Rules 擋下。請確認已發布 v8 規則，並用新版網址建立新房間測試。"
     : raw;
-  els.statusText.textContent = message;
-  console.error(error);
+  els.statusText.textContent = code ? `${message} (${code})` : message;
+  console.error("Gomoku Firebase error:", error);
 }
 
 function playSound(kind = "move") {
