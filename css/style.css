@@ -376,6 +376,15 @@ code {
   background: color-mix(in srgb, var(--panel-solid) 72%, transparent);
 }
 
+.invite-link-wrap {
+  margin-top: 12px;
+}
+
+.invite-link-wrap input[readonly] {
+  font-size: 0.82rem;
+  cursor: copy;
+}
+
 .tips ul {
   margin: 0;
   padding-left: 1.2rem;

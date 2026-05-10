@@ -44,6 +44,8 @@ const els = {
   createRoomBtn: document.getElementById("createRoomBtn"),
   joinRoomBtn: document.getElementById("joinRoomBtn"),
   copyRoomBtn: document.getElementById("copyRoomBtn"),
+  inviteLinkWrap: document.getElementById("inviteLinkWrap"),
+  inviteLinkInput: document.getElementById("inviteLinkInput"),
   roomInfo: document.getElementById("roomInfo"),
   playerInfo: document.getElementById("playerInfo"),
   newGameBtn: document.getElementById("newGameBtn"),
@@ -89,8 +91,12 @@ init();
 function init() {
   hydratePreferences();
   bindEvents();
+  const invitedRoomCode = applyInviteFromUrl();
   resizeCanvasForDisplay();
   startNewGame({ silent: true });
+  if (invitedRoomCode) {
+    updateStatus(`已載入邀請房間 ${invitedRoomCode}，輸入暱稱後按「加入房間」。`);
+  }
   window.addEventListener("resize", () => {
     resizeCanvasForDisplay();
     drawBoard();
@@ -144,6 +150,7 @@ function bindEvents() {
     state.mode = els.modeSelect.value;
     localStorage.setItem(`${STORAGE_PREFIX}:mode`, state.mode);
     togglePanels();
+    if (state.mode !== "online") clearInviteFromUrl();
     startNewGame();
   });
 
@@ -185,13 +192,29 @@ function bindEvents() {
   els.createRoomBtn.addEventListener("click", createOnlineRoom);
   els.joinRoomBtn.addEventListener("click", joinOnlineRoom);
   els.copyRoomBtn.addEventListener("click", copyRoomCode);
+  if (els.inviteLinkInput) {
+    els.inviteLinkInput.addEventListener("click", () => els.inviteLinkInput.select());
+  }
 }
 
 function togglePanels() {
   const isOnline = state.mode === "online";
   els.onlinePanel.classList.toggle("hidden", !isOnline);
-  els.copyRoomBtn.classList.toggle("hidden", !isOnline || !online.roomCode);
   els.aiDifficultyWrap.classList.toggle("hidden", state.mode !== "ai");
+  updateInviteUi();
+}
+
+function applyInviteFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const roomCode = normalizeRoomCode(params.get("room") || params.get("r"));
+  if (!roomCode) return "";
+
+  state.mode = "online";
+  els.modeSelect.value = "online";
+  els.roomCodeInput.value = roomCode;
+  localStorage.setItem(`${STORAGE_PREFIX}:mode`, "online");
+  togglePanels();
+  return roomCode;
 }
 
 function createBoard() {
@@ -824,7 +847,8 @@ function subscribeRoom(roomCode) {
   online.roomCode = normalizeRoomCode(roomCode);
   online.roomRef = doc(online.db, "gomokuRooms", online.roomCode);
   els.roomCodeInput.value = online.roomCode;
-  els.copyRoomBtn.classList.remove("hidden");
+  setInviteInUrl(online.roomCode);
+  updateInviteUi();
   online.unsubscribe = onSnapshot(online.roomRef, snap => {
     if (!snap.exists()) {
       els.roomInfo.textContent = "房間不存在";
@@ -905,6 +929,10 @@ async function playOnlineMove(row, col) {
 
 async function resetOnlineRoom() {
   if (!online.roomRef) return;
+  if (online.localColor !== BLACK) {
+    showError(new Error("線上模式只有建立房間的黑棋玩家可以重新開始。"));
+    return;
+  }
   try {
     await updateDoc(online.roomRef, {
       board: flattenBoard(createBoard()),
@@ -978,7 +1006,49 @@ function generateRoomCode() {
 }
 
 function normalizeRoomCode(value) {
-  return String(value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
+  let raw = String(value || "").trim();
+  if (!raw) return "";
+
+  try {
+    const url = new URL(raw);
+    raw = url.searchParams.get("room") || url.searchParams.get("r") || raw;
+  } catch {
+    const match = raw.match(/[?&](?:room|r)=([A-Za-z0-9]+)/);
+    if (match) raw = match[1];
+  }
+
+  return raw.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
+}
+
+function getInviteLink() {
+  if (!online.roomCode) return "";
+  const url = new URL(window.location.href);
+  url.searchParams.set("room", online.roomCode);
+  url.hash = "";
+  return url.toString();
+}
+
+function setInviteInUrl(roomCode) {
+  if (!roomCode) return;
+  const url = new URL(window.location.href);
+  url.searchParams.set("room", normalizeRoomCode(roomCode));
+  url.hash = "";
+  window.history.replaceState({}, "", url);
+}
+
+function clearInviteFromUrl() {
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has("room") && !url.searchParams.has("r")) return;
+  url.searchParams.delete("room");
+  url.searchParams.delete("r");
+  window.history.replaceState({}, "", url);
+}
+
+function updateInviteUi() {
+  const hasRoom = state.mode === "online" && Boolean(online.roomCode);
+  els.copyRoomBtn.classList.toggle("hidden", !hasRoom);
+  if (els.inviteLinkWrap) els.inviteLinkWrap.classList.toggle("hidden", !hasRoom);
+  if (els.inviteLinkInput) els.inviteLinkInput.value = hasRoom ? getInviteLink() : "";
 }
 
 function getNickname() {
@@ -990,12 +1060,18 @@ function getNickname() {
 
 async function copyRoomCode() {
   if (!online.roomCode) return;
+  const inviteLink = getInviteLink();
   try {
-    await navigator.clipboard.writeText(online.roomCode);
-    els.copyRoomBtn.textContent = "已複製";
-    window.setTimeout(() => els.copyRoomBtn.textContent = "複製房號", 1200);
+    await navigator.clipboard.writeText(inviteLink);
+    els.copyRoomBtn.textContent = "已複製連結";
+    window.setTimeout(() => els.copyRoomBtn.textContent = "複製邀請連結", 1200);
   } catch {
-    els.roomCodeInput.select();
+    if (els.inviteLinkInput) {
+      els.inviteLinkInput.focus();
+      els.inviteLinkInput.select();
+    } else {
+      els.roomCodeInput.select();
+    }
   }
 }
 

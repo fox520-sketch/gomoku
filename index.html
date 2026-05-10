@@ -47,7 +47,7 @@
           <div class="action-row">
             <button id="newGameBtn" class="primary">重新開始</button>
             <button id="undoBtn">悔棋</button>
-            <button id="copyRoomBtn" class="ghost hidden">複製房號</button>
+            <button id="copyRoomBtn" class="ghost hidden">複製邀請連結</button>
           </div>
         </section>
 
@@ -121,13 +121,17 @@
             </div>
             <label>
               房號
-              <input id="roomCodeInput" type="text" maxlength="8" placeholder="輸入或建立房號" />
+              <input id="roomCodeInput" type="text" maxlength="256" placeholder="輸入房號或貼上邀請連結" />
             </label>
             <div class="room-card">
               <span class="small-label">房間資訊</span>
               <strong id="roomInfo">尚未連線</strong>
               <span id="playerInfo" class="muted">你尚未加入房間</span>
             </div>
+            <label id="inviteLinkWrap" class="invite-link-wrap hidden">
+              邀請連結
+              <input id="inviteLinkInput" type="text" readonly aria-label="可分享給朋友的房間邀請連結" />
+            </label>
           </section>
 
           <section class="panel-block tips">
@@ -136,6 +140,7 @@
               <li>黑棋先手，任一方向連續 5 顆即獲勝。</li>
               <li>手機上直接點棋盤交叉點即可落子。</li>
               <li>線上模式會同步棋盤、回合、勝負與悔棋狀態。</li>
+              <li>建立房間後可複製邀請連結，朋友開啟後會自動帶入房號。</li>
             </ul>
           </section>
         </aside>
